@@ -1,5 +1,6 @@
 import { FileText, UserCheck, Puzzle, ShieldCheck, Zap } from 'lucide-react';
-import callGemini from '../services/imagetotext';
+import main from '../services/imagetotext';
+
 
 interface NavbarProps {
   activeTab: 'vault' | 'profile' | 'popup';
@@ -53,7 +54,7 @@ export const Navbar = ({
             <span>User Profile & Options</span>
           </button>
          <div className='size-11 bg-black flex items-center justify-center'>
-          <button className='size-11 bg-red' onClick={callGemini}>run</button>
+          <button className='size-11 bg-red' onClick={main}>run</button>
          </div>
             
 
