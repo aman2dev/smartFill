@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { UserProfile, StoredDocument } from '../types';
 import { activeExamRecipe, universalEngineFiller } from '../services/contentScript';
-import { Zap, Sparkles, ExternalLink, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { Zap, ExternalLink, ShieldCheck, CheckCircle2, Play } from 'lucide-react';
 
 interface PopupViewProps {
   profile: UserProfile;
@@ -22,7 +22,6 @@ export const PopupView = ({
   const [fillSuccess, setFillSuccess] = useState(false);
 
   useEffect(() => {
-    // Check chrome.storage.local for studentProfile status
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.get(['studentProfile'], (res: any) => {
         if (res.studentProfile && res.studentProfile.full_name) {
@@ -36,7 +35,6 @@ export const PopupView = ({
     }
   }, [profile]);
 
-  // Execute universal script injection on active tab
   const handleFillFormClick = async () => {
     setIsFilling(true);
     setFillSuccess(false);
@@ -45,6 +43,11 @@ export const PopupView = ({
       full_name: profile.fullName || 'Rahul Sharma',
       father_name: profile.fatherName || 'Mahesh Sharma',
       mother_name: profile.motherName || 'Sunita Sharma',
+      dob: profile.dob || '15/08/1998',
+      gender: profile.gender || 'Male',
+      category: profile.category || 'OBC',
+      email: profile.email || 'rahul.sharma@gmail.com',
+      phone: profile.phone || '9876543210',
       aadhaar_no: profile.aadhaarNumber || '5489 1204 9832',
       address: profile.addressLine1 || 'Flat 402, Green Valley',
       city: profile.city || 'New Delhi',
@@ -66,18 +69,17 @@ export const PopupView = ({
         console.error('Script injection error:', err);
       }
     } else {
-      // In web simulation preview mode
       universalEngineFiller(activeExamRecipe, studentProfileData);
     }
 
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, 500));
     setIsFilling(false);
     setFillSuccess(true);
 
     onNotify(
       'success',
       'Engine Injection Completed',
-      'Matching labels auto-filled with native input setter bypass.'
+      'Matching fields (Name, Father/Mother name verification, Gender, Category, Aadhaar) auto-filled.'
     );
   };
 
@@ -90,43 +92,41 @@ export const PopupView = ({
   };
 
   return (
-    <div className="w-[360px] bg-slate-950 text-slate-100 p-4 space-y-4 font-sans border border-slate-800 rounded-2xl shadow-2xl flex flex-col justify-between mx-auto">
+    <div className="w-[360px] bg-white text-slate-900 p-5 space-y-4 font-sans border border-slate-200 rounded-2xl shadow-xl flex flex-col justify-between mx-auto">
       
       {/* Header Bar */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-200">
           <div className="flex items-center space-x-2.5">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-600 p-0.5 shadow-md shadow-cyan-500/20">
-              <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-                <Zap className="w-5 h-5 text-cyan-400 fill-cyan-400/20" />
-              </div>
+            <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center text-white">
+              <Zap className="w-4 h-4 fill-white text-white" />
             </div>
             <div>
-              <h1 className="font-extrabold text-base bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-indigo-400">
+              <h1 className="font-bold text-base text-slate-900">
                 smartFill
               </h1>
-              <p className="text-[10px] text-slate-400">Extension Engine</p>
+              <p className="text-[10px] text-slate-500">Extension Engine</p>
             </div>
           </div>
 
-          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-[11px]">
-            <span id="profileStatus" className={`font-bold ${profileReady ? 'text-emerald-400' : 'text-amber-400'}`}>
-              {profileReady ? 'Ready' : 'Not Setup'}
+          <div className="px-2.5 py-1 rounded bg-slate-100 border border-slate-200 text-xs font-semibold">
+            <span className={profileReady ? 'text-orange-600 font-bold' : 'text-slate-500'}>
+              {profileReady ? 'Ready' : 'Setup Required'}
             </span>
           </div>
         </div>
 
-        {/* Profile User Status */}
-        <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+        {/* Profile Status */}
+        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between">
           <div>
-            <span id="studentNameText" className="text-xs font-bold text-slate-100 block">
-              User: {studentName || profile.fullName || ' राहुल शर्मा (Rahul Sharma)'}
+            <span className="text-xs font-bold text-slate-900 block">
+              User: {studentName || profile.fullName || 'Rahul Sharma'}
             </span>
-            <span className="text-[10px] text-slate-400">
-              {documents.length} Vault Documents Persisted
+            <span className="text-[10px] text-slate-500">
+              {documents.length} Vault Documents Stored
             </span>
           </div>
-          <ShieldCheck className="w-5 h-5 text-cyan-400 shrink-0" />
+          <ShieldCheck className="w-5 h-5 text-orange-600 shrink-0" />
         </div>
 
         {/* Action Button: Auto Fill */}
@@ -135,15 +135,15 @@ export const PopupView = ({
             id="fillBtn"
             onClick={handleFillFormClick}
             disabled={!profileReady || isFilling}
-            className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 via-teal-400 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-slate-950 font-extrabold text-sm shadow-xl shadow-cyan-500/25 transition-all transform active:scale-95 flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer"
+            className="w-full py-3 px-4 rounded-xl bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-bold text-sm transition-colors flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer shadow-xs"
           >
-            <Sparkles className={`w-5 h-5 ${isFilling ? 'animate-spin' : ''}`} />
-            <span>{isFilling ? 'Injecting Script...' : '⚡ Auto Fill Active Form'}</span>
+            <Play className={`w-4 h-4 fill-white ${isFilling ? 'animate-spin' : ''}`} />
+            <span>{isFilling ? 'Injecting Script...' : 'Auto Fill Active Form'}</span>
           </button>
 
           {fillSuccess && (
-            <div className="p-2 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-xs flex items-center justify-center space-x-1.5 animate-fade-in">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <div className="p-2.5 rounded-xl bg-orange-50 border border-orange-200 text-orange-800 text-xs flex items-center justify-center space-x-1.5">
+              <CheckCircle2 className="w-4 h-4 text-orange-600" />
               <span>Universal Autofill Executed!</span>
             </div>
           )}
@@ -151,14 +151,13 @@ export const PopupView = ({
       </div>
 
       {/* Options Dashboard Button */}
-      <div className="pt-3 border-t border-slate-800">
+      <div className="pt-3 border-t border-slate-200">
         <button
-          id="openOptionsBtn"
           onClick={handleOpenOptions}
-          className="w-full py-2.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 font-semibold text-xs border border-slate-800 flex items-center justify-center space-x-2 transition-colors cursor-pointer"
+          className="w-full py-2.5 px-3 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-semibold text-xs border border-slate-200 flex items-center justify-center space-x-2 transition-colors cursor-pointer"
         >
-          <span>Open Full Options Dashboard</span>
-          <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
+          <span>Open Full Dashboard</span>
+          <ExternalLink className="w-3.5 h-3.5 text-orange-600" />
         </button>
       </div>
 

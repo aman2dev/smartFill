@@ -69,6 +69,8 @@ export function App() {
       'fullName',
       'fatherName',
       'motherName',
+      'gender',
+      'category',
       'aadhaarNumber',
       'addressLine1',
       'city',
@@ -83,7 +85,7 @@ export function App() {
 
   if (isPopupOnlyView) {
     return (
-      <>
+      <div className="bg-white min-h-screen p-4 flex justify-center items-center">
         <PopupView
           profile={profile}
           documents={documents}
@@ -97,12 +99,12 @@ export function App() {
           onNotify={addToast}
         />
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-      </>
+      </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-slate-950">
+    <div className="min-h-screen bg-white text-slate-900 flex flex-col font-sans selection:bg-orange-500 selection:text-white">
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -110,7 +112,7 @@ export function App() {
         profileCompleteness={calculateCompleteness()}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 bg-white">
         {activeTab === 'profile' && (
           <UserProfileForm
             profile={profile}
@@ -130,9 +132,9 @@ export function App() {
 
         {activeTab === 'popup' && (
           <div className="flex flex-col items-center justify-center py-10 space-y-4">
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-              <h3 className="text-sm font-semibold text-slate-300 mb-3 text-center">
-                Chrome Extension Action Popup Window Preview
+            <div className="bg-slate-50 border border-slate-200 p-6 rounded-2xl shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-4 text-center">
+                Chrome Extension Popup Window Preview
               </h3>
               <PopupView
                 profile={profile}
@@ -145,10 +147,10 @@ export function App() {
         )}
       </main>
 
-      <footer className="border-t border-slate-900 bg-slate-950 py-6">
+      <footer className="border-t border-slate-200 bg-slate-50 py-6">
         <div className="max-w-7xl mx-auto px-4 text-center text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>smartFill Monorepo Workspace • Chrome Extension Manifest V3</span>
-          <span className="text-slate-400">All data stored locally in browser chrome storage</span>
+          <span>smartFill Extension • Pure White UI</span>
+          <span className="text-slate-600 font-medium">All data stored locally in browser storage</span>
         </div>
       </footer>
 

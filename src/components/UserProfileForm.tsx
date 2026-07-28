@@ -18,7 +18,7 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
   const [statusMessage, setStatusMessage] = useState<string>('');
 
   useEffect(() => {
-    // Load studentProfile from chrome.storage.local if available
+    // Sync with state or chrome storage
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.get(['studentProfile'], (res: any) => {
         if (res.studentProfile) {
@@ -28,6 +28,8 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
             fullName: data.full_name || prev.fullName,
             fatherName: data.father_name || prev.fatherName,
             motherName: data.mother_name || prev.motherName,
+            gender: data.gender || prev.gender,
+            category: data.category || prev.category,
             aadhaarNumber: data.aadhaar_no || prev.aadhaarNumber,
             addressLine1: data.address || prev.addressLine1,
             city: data.city || prev.city,
@@ -38,8 +40,10 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
           }
         }
       });
+    } else {
+      setFormData(profile);
     }
-  }, []);
+  }, [profile]);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -50,7 +54,7 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
       const base64Str = event.target?.result as string;
       setPhotoBase64(base64Str);
       setFormData((prev) => ({ ...prev, photo_base64: base64Str }));
-      onNotify('info', 'Photo Loaded', 'Profile photo converted to base64 for storage.');
+      onNotify('info', 'Photo Uploaded', 'Passport photo saved for auto-fill.');
     };
     reader.readAsDataURL(file);
   };
@@ -62,6 +66,8 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
       full_name: formData.fullName,
       father_name: formData.fatherName,
       mother_name: formData.motherName,
+      gender: formData.gender,
+      category: formData.category,
       aadhaar_no: formData.aadhaarNumber,
       address: formData.addressLine1,
       city: formData.city,
@@ -69,31 +75,31 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
       photo_base64: photoBase64,
     };
 
-    // Save to chrome.storage.local if running in extension mode
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({ studentProfile: profileData }, () => {
-        setStatusMessage('Profile saved successfully in Chrome Storage!');
+        setStatusMessage('Master profile saved in Chrome Storage!');
         setTimeout(() => setStatusMessage(''), 3000);
       });
     }
 
     onSaveProfile({ ...formData, photo_base64: photoBase64 });
-    onNotify('success', 'Student Profile Saved', 'Profile details persisted for universal auto fill.');
+    onNotify('success', 'Master Profile Saved', 'Saved for instant form auto-fill on exam portals.');
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl">
+    <div className="space-y-6 animate-fade-in bg-white text-slate-900">
+      {/* Top Banner */}
+      <div className="bg-slate-50 border border-slate-200 p-6 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
         <div>
-          <div className="flex items-center space-x-2 text-cyan-400 text-xs font-semibold uppercase tracking-wider mb-1">
+          <div className="flex items-center space-x-2 text-orange-600 text-xs font-semibold uppercase tracking-wider mb-1">
             <User className="w-4 h-4" />
             <span>Master Profile Management</span>
           </div>
-          <h2 className="text-2xl font-bold text-white tracking-tight">
-            Student Profile Details
+          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">
+            Student Application Details
           </h2>
-          <p className="text-slate-400 text-sm mt-1">
-            Fill your master details once. The extension will automatically populate matching fields on any government exam portal.
+          <p className="text-slate-600 text-sm mt-1">
+            Fill your details once or extract them automatically from documents. The extension populates matching inputs on BPSC, SSC, UPSC & other exam portals.
           </p>
         </div>
 
@@ -110,36 +116,37 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
               downloadAnchor.remove();
               onNotify('info', 'Exported JSON', 'Profile backup downloaded.');
             }}
-            className="flex items-center space-x-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition-colors cursor-pointer"
+            className="flex items-center space-x-2 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-300 transition-colors cursor-pointer"
           >
-            <Download className="w-4 h-4 text-cyan-400" />
+            <Download className="w-4 h-4 text-orange-600" />
             <span>Export JSON</span>
           </button>
         </div>
       </div>
 
-      <form onSubmit={handleFormSubmit} className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-xl space-y-6">
+      {/* Main Form */}
+      <form onSubmit={handleFormSubmit} className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 shadow-xs space-y-6">
         
         {statusMessage && (
-          <div className="p-3 bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-xs font-bold rounded-xl flex items-center space-x-2 animate-fade-in">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <div className="p-3.5 bg-orange-50 border border-orange-200 text-orange-800 text-xs font-bold rounded-xl flex items-center space-x-2 animate-fade-in">
+            <CheckCircle2 className="w-4 h-4 text-orange-600" />
             <span>{statusMessage}</span>
           </div>
         )}
 
-        {/* Photo Upload & Preview Section */}
-        <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 space-y-4">
-          <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+        {/* Photo Upload Section */}
+        <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 space-y-4">
+          <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
             Applicant Passport Photo
           </label>
 
           <div className="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-6">
-            <div className="w-28 h-32 rounded-xl bg-slate-900 border-2 border-dashed border-slate-700 flex flex-col items-center justify-center overflow-hidden relative group">
+            <div className="w-28 h-32 rounded-xl bg-white border-2 border-dashed border-slate-300 flex flex-col items-center justify-center overflow-hidden relative shadow-xs">
               {photoBase64 ? (
                 <img id="photo_preview" src={photoBase64} alt="Applicant Preview" className="w-full h-full object-cover" />
               ) : (
-                <div className="text-center p-2 text-slate-500">
-                  <Image className="w-8 h-8 mx-auto mb-1 text-slate-600" />
+                <div className="text-center p-2 text-slate-400">
+                  <Image className="w-8 h-8 mx-auto mb-1 text-slate-400" />
                   <span className="text-[10px]">No Photo</span>
                 </div>
               )}
@@ -151,10 +158,10 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
                 id="photo_input"
                 accept="image/*"
                 onChange={handlePhotoUpload}
-                className="block text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-cyan-500 file:text-slate-950 hover:file:bg-cyan-400 cursor-pointer"
+                className="block text-xs text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-orange-500 file:text-white hover:file:bg-orange-600 cursor-pointer"
               />
               <p className="text-[11px] text-slate-500">
-                Converts image to Base64 string for local browser storage persistence.
+                Saved in local browser storage for quick uploading on exam forms.
               </p>
             </div>
           </div>
@@ -162,9 +169,11 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
 
         {/* Form Inputs Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          
+          {/* Full Name */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-              Full Name (English / Hindi) <span className="text-rose-400">*</span>
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+              Full Name (English / Hindi) <span className="text-orange-500">*</span>
             </label>
             <input
               type="text"
@@ -172,13 +181,14 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
               value={formData.fullName}
               onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
               placeholder="e.g. Rahul Sharma"
-              className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-400 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition-colors"
+              className="w-full bg-slate-50 border border-slate-300 focus:border-orange-500 focus:bg-white rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none transition-colors"
               required
             />
           </div>
 
+          {/* Father's Name */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
               Father's Name
             </label>
             <input
@@ -187,12 +197,13 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
               value={formData.fatherName}
               onChange={(e) => setFormData({ ...formData, fatherName: e.target.value })}
               placeholder="e.g. Mahesh Sharma"
-              className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-400 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition-colors"
+              className="w-full bg-slate-50 border border-slate-300 focus:border-orange-500 focus:bg-white rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none transition-colors"
             />
           </div>
 
+          {/* Mother's Name */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
               Mother's Name
             </label>
             <input
@@ -201,12 +212,51 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
               value={formData.motherName}
               onChange={(e) => setFormData({ ...formData, motherName: e.target.value })}
               placeholder="e.g. Sunita Sharma"
-              className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-400 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition-colors"
+              className="w-full bg-slate-50 border border-slate-300 focus:border-orange-500 focus:bg-white rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none transition-colors"
             />
           </div>
 
+          {/* Gender Select */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+              Gender / Sex
+            </label>
+            <select
+              id="gender"
+              value={formData.gender || ''}
+              onChange={(e) => setFormData({ ...formData, gender: e.target.value as any })}
+              className="w-full bg-slate-50 border border-slate-300 focus:border-orange-500 focus:bg-white rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none transition-colors"
+            >
+              <option value="">Select Gender</option>
+              <option value="Male">Male (पुरुष)</option>
+              <option value="Female">Female (महिला)</option>
+              <option value="Other">Other (अन्य)</option>
+            </select>
+          </div>
+
+          {/* Category Select */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+              Category / Community
+            </label>
+            <select
+              id="category"
+              value={formData.category || ''}
+              onChange={(e) => setFormData({ ...formData, category: e.target.value as any })}
+              className="w-full bg-slate-50 border border-slate-300 focus:border-orange-500 focus:bg-white rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none transition-colors"
+            >
+              <option value="">Select Category</option>
+              <option value="General">General / Unreserved (UR)</option>
+              <option value="OBC">OBC (Other Backward Class)</option>
+              <option value="EWS">EWS (Economically Weaker Section)</option>
+              <option value="SC">SC (Scheduled Caste)</option>
+              <option value="ST">ST (Scheduled Tribe)</option>
+            </select>
+          </div>
+
+          {/* Aadhaar Number */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
               Aadhaar Card Number
             </label>
             <input
@@ -215,12 +265,13 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
               value={formData.aadhaarNumber}
               onChange={(e) => setFormData({ ...formData, aadhaarNumber: e.target.value })}
               placeholder="e.g. 5489 1204 9832"
-              className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-400 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition-colors"
+              className="w-full bg-slate-50 border border-slate-300 focus:border-orange-500 focus:bg-white rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none transition-colors"
             />
           </div>
 
+          {/* Permanent Address */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
               Permanent Address
             </label>
             <input
@@ -229,13 +280,14 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
               value={formData.addressLine1}
               onChange={(e) => setFormData({ ...formData, addressLine1: e.target.value })}
               placeholder="Flat/House No, Street Name"
-              className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-400 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition-colors"
+              className="w-full bg-slate-50 border border-slate-300 focus:border-orange-500 focus:bg-white rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none transition-colors"
             />
           </div>
 
+          {/* City */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-              City
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+              City / District
             </label>
             <input
               type="text"
@@ -243,13 +295,14 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
               value={formData.city}
               onChange={(e) => setFormData({ ...formData, city: e.target.value })}
               placeholder="e.g. New Delhi"
-              className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-400 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition-colors"
+              className="w-full bg-slate-50 border border-slate-300 focus:border-orange-500 focus:bg-white rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none transition-colors"
             />
           </div>
 
+          {/* Town */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-              Town
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+              Town / Tehsil
             </label>
             <input
               type="text"
@@ -257,25 +310,25 @@ export const UserProfileForm: React.FC<UserProfileFormProps> = ({
               value={formData.town || ''}
               onChange={(e) => setFormData({ ...formData, town: e.target.value })}
               placeholder="e.g. Connaught Place"
-              className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-400 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition-colors"
+              className="w-full bg-slate-50 border border-slate-300 focus:border-orange-500 focus:bg-white rounded-xl px-4 py-2.5 text-sm text-slate-900 focus:outline-none transition-colors"
             />
           </div>
         </div>
 
         {/* Action Controls */}
-        <div className="pt-6 border-t border-slate-800 flex items-center justify-between">
-          <div className="flex items-center space-x-2 text-xs text-emerald-400">
-            <ShieldCheck className="w-4 h-4" />
-            <span>Saved locally for instant Chrome extension auto-filling</span>
+        <div className="pt-6 border-t border-slate-200 flex items-center justify-between">
+          <div className="flex items-center space-x-2 text-xs text-slate-600 font-medium">
+            <ShieldCheck className="w-4 h-4 text-orange-600" />
+            <span>Saved in browser storage for BPSC, SSC, UPSC form filling</span>
           </div>
 
           <button
             type="submit"
             id="saveBtn"
-            className="flex items-center space-x-2 px-7 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-slate-950 font-extrabold text-sm shadow-lg shadow-cyan-500/25 transition-all transform active:scale-95 cursor-pointer"
+            className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-sm transition-colors cursor-pointer shadow-xs"
           >
             <Save className="w-4 h-4" />
-            <span>Save Profile</span>
+            <span>Save Master Profile</span>
           </button>
         </div>
       </form>
