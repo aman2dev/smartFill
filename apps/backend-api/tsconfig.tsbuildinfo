@@ -1,1 +1,1 @@
-{"root":["./src/server.ts"],"errors":true,"version":"5.9.3"}
+{"root":["./src/app.ts","./src/server.ts","./src/config/env.ts","./src/config/gemini.ts","./src/controllers/document.controller.ts","./src/controllers/health.controller.ts","./src/controllers/recipe.controller.ts","./src/routes/document.routes.ts","./src/routes/health.routes.ts","./src/routes/index.ts","./src/routes/recipe.routes.ts","./src/services/ai.service.ts","./src/services/document.service.ts","./src/services/recipe.service.ts"],"version":"5.9.3"}

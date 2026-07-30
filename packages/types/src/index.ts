@@ -99,3 +99,19 @@ export interface UserCreditsResponse {
   credits: number;
   plan: 'free' | 'pro' | 'enterprise';
 }
+
+export interface ExtractDocumentRequest {
+  fileBase64: string;
+  mimeType: string;
+  fileName?: string;
+  userId?: string;
+}
+
+export interface ExtractDocumentResponse {
+  success: true;
+  extractedProfile: Partial<StudentProfile>;
+  extractedFields: ExtractedField[];
+  rawText?: string;
+  remainingCredits: number;
+}
+

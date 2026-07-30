@@ -1,0 +1,12 @@
+import { Router } from 'express';
+import recipeRoutes from './recipe.routes.js';
+import documentRoutes from './document.routes.js';
+import healthRoutes from './health.routes.js';
+
+const router: Router = Router();
+
+router.use('/', healthRoutes);
+router.use('/api/v1', recipeRoutes);
+router.use('/api/v1', documentRoutes);
+
+export default router;
