@@ -1,43 +1,10 @@
-export type DocumentType = 
-  | 'Aadhaar Card'
-  | '10th Marksheet'
-  | '12th Marksheet'
-  | 'Degree Certificate'
-  | 'Domicile Certificate'
-  | 'PAN Card'
-  | 'Passport Photo'
-  | 'Signature'
-  | 'Other Document';
-
-export type FileType = 'pdf' | 'jpeg' | 'jpg' | 'png';
-
-export interface ExtractedField {
-  key: string;
-  label: string;
-  value: string;
-  confidence: number; // 0 to 100
-  category: 'personal' | 'contact' | 'identity' | 'academic';
-}
-
-export interface StoredDocument {
-  id: string;
-  name: string;
-  type: DocumentType;
-  fileType: FileType;
-  sizeBytes: number;
-  dataUrl?: string; // base64 or object URL
-  uploadDate: string;
-  status: 'scanning' | 'processed' | 'error';
-  confidenceScore: number;
-  extractedFields: ExtractedField[];
-  errorDetails?: string;
-}
+export * from '@smartFill/types';
 
 export interface UserProfile {
   fullName: string;
   fatherName: string;
   motherName: string;
-  dob: string; // YYYY-MM-DD
+  dob: string;
   age?: number;
   gender: 'Male' | 'Female' | 'Other' | '';
   category: 'General' | 'OBC' | 'SC' | 'ST' | 'EWS' | '';
@@ -51,7 +18,6 @@ export interface UserProfile {
   state: string;
   pincode: string;
   
-  // Academic
   tenthBoard: string;
   tenthRollNo: string;
   tenthPassingYear: string;
@@ -67,7 +33,6 @@ export interface UserProfile {
   graduationPassingYear: string;
   graduationCgpaPercentage: string;
 
-  // Media
   photoUrl?: string;
   photo_base64?: string;
   signatureUrl?: string;
@@ -79,7 +44,7 @@ export interface ExamTemplate {
   code: string;
   organization: string;
   deadline: string;
-  requiredDocuments: DocumentType[];
+  requiredDocuments: Array<any>;
   fields: {
     id: string;
     label: string;

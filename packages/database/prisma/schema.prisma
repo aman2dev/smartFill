@@ -1,0 +1,30 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/client"
+}
+
+model User {
+  id         String        @id @default(uuid())
+  email      String        @unique
+  credits    Int           @default(50)
+  plan       String        @default("free")
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  recipeLogs RecipeCache[]
+}
+
+model RecipeCache {
+  id           String   @id @default(uuid())
+  domain       String   @unique
+  formTitle    String
+  mappingsJson Json
+  version      Int      @default(1)
+  createdById  String?
+  createdBy    User?    @relation(fields: [createdById], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}

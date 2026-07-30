@@ -1,0 +1,30 @@
+{
+  "name": "@smartFill/chrome-extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@smartFill/types": "workspace:*",
+    "@google/genai": "^2.13.0",
+    "lucide-react": "^0.378.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@smartFill/tsconfig": "workspace:*",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/chrome": "^0.0.268",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11"
+  }
+}

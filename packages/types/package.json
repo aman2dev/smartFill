@@ -1,0 +1,16 @@
+{
+  "name": "@smartFill/types",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch",
+    "clean": "rimraf dist"
+  },
+  "devDependencies": {
+    "@smartFill/tsconfig": "workspace:*",
+    "typescript": "^5.4.5"
+  }
+}
