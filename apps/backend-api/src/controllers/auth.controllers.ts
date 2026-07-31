@@ -29,7 +29,7 @@ export async function signup(req: Request, res: Response) {
             data: {
                 email: user.email,
                 password: hashedPassword,
-                name: user.name,
+                userName: user.name,
             }
         })
 
