@@ -49,24 +49,38 @@ export const extractRecipeService = async (
   });
 
   if (cached) {
-    console.log(`[Cache Hit] Serving cached recipe for domain: ${domain}`);
     const parsedMappings = cached.mappingsJson as unknown as RecipeMapping[];
-    return {
-      statusCode: 200,
-      data: {
-        success: true,
-        domain: cached.domain,
-        cached: true,
-        recipe: {
-          id: cached.id,
+    const hasValidSelectors = Array.isArray(parsedMappings) && parsedMappings.some((m) => !!m.selector || m.strategy === 'css_selector');
+    const hasInvalidSelectors = Array.isArray(parsedMappings) && parsedMappings.some((m) => 
+      !m.selector ||
+      m.selector.includes('nth-child') || 
+      m.selector.includes('nth-of-type') ||
+      m.selector.includes(':contains') ||
+      m.selector.includes(':has(')
+    );
+
+    if (hasValidSelectors && !hasInvalidSelectors) {
+      console.log(`[Cache Hit] Serving selector-enhanced cached recipe for domain: ${domain}`);
+      return {
+        statusCode: 200,
+        data: {
+          success: true,
           domain: cached.domain,
-          formTitle: cached.formTitle,
-          version: cached.version,
-          mappings: parsedMappings
-        },
-        remainingCredits
-      }
-    };
+          cached: true,
+          recipe: {
+            id: cached.id,
+            domain: cached.domain,
+            formTitle: cached.formTitle,
+            version: cached.version,
+            mappings: parsedMappings
+          },
+          remainingCredits
+        }
+      };
+    } else {
+      console.log(`[Cache Invalidated] Refreshing recipe with invalid/legacy selectors for domain: ${domain}`);
+      await db.recipeCache.delete({ where: { domain } }).catch(() => {});
+    }
   }
 
   console.log(`[Cache Miss] Generating recipe via Gemini for domain: ${domain}`);
@@ -74,10 +88,16 @@ export const extractRecipeService = async (
   // 3. Dynamic Gemini AI Parsing Generation
   const recipe: ExamRecipe = await parseFormWithAI(domain, htmlSnippet);
 
-  // 4. Save newly generated recipe to DB Cache & deduct credit
+  // 4. Save newly generated recipe to DB Cache & deduct credit (using upsert to prevent unique constraint conflict)
   try {
-    await db.recipeCache.create({
-      data: {
+    await db.recipeCache.upsert({
+      where: { domain },
+      update: {
+        formTitle: recipe.formTitle,
+        mappingsJson: recipe.mappings as any,
+        version: { increment: 1 }
+      },
+      create: {
         domain,
         formTitle: recipe.formTitle,
         mappingsJson: recipe.mappings as any,
