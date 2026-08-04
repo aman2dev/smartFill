@@ -61,9 +61,10 @@ export interface StudentProfile {
 
 export interface RecipeMapping {
   match_label: string;
-  profile_key: keyof StudentProfile;
+  profile_key: keyof StudentProfile | string;
   is_verify?: boolean;
-  strategy?: 'exact' | 'contains' | 'regex';
+  selector?: string;
+  strategy?: 'exact' | 'contains' | 'regex' | 'css_selector';
 }
 
 export interface ExamRecipe {
