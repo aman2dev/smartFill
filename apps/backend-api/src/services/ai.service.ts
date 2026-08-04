@@ -38,25 +38,54 @@ export const parseFormWithAI = async (
           role: 'user',
           parts: [
             {
-              text: `Analyze this HTML snippet from an application form domain (${domain}):
-${htmlSnippet.slice(0, 4000)}
+              text: `You are an expert Web Form Parser for Government Application portals.
+Analyze this HTML snippet from website domain (${domain}):
 
-Map form input labels to standard StudentProfile JSON keys: 
-- full_name
-- father_name
-- mother_name
-- gender
-- category
-- aadhaar_no
-- address
-- city
-- town
+\`\`\`html
+${htmlSnippet.slice(0, 15000)}
+\`\`\`
 
-Return JSON matching:
+Task: Inspect every <input>, <select>, <textarea> in the HTML tree and generate exact CSS selectors (e.g. "#txt_candidate_name", "input[name='email']", "select#gender") mapped to standard profile JSON keys:
+- full_name (Candidate / Applicant Name)
+- father_name (Father's Name)
+- mother_name (Mother's Name)
+- dob (Date of Birth)
+- gender (Gender / Sex)
+- category (Community / Caste Category)
+- aadhaar_no (Aadhaar Number / Unique ID)
+- email (Email Address - NOT OTP input)
+- phone (Mobile Number - NOT OTP input)
+- address (Permanent / Correspondence Address)
+- city (City / District)
+- state (State)
+- pincode (Pin Code / Zip)
+- panCard (PAN Card Number)
+- accountNumber (Bank Account Number)
+- ifscCode (Bank IFSC Code)
+
+CRITICAL AI SELECTOR RULES:
+1. "selector": Construct simple, clean, standard W3C CSS selectors supported natively by browser document.querySelector (e.g. "#inputId", "input[name='attrName']", "input[placeholder*='DD/MM/YYYY']", "input[name*='dob' i]"). NEVER output non-standard jQuery pseudo-selectors like ":contains()" or ":has()", and NEVER output fragile deep DOM tree paths like "div > div:nth-child(7)".
+2. "is_verify": Set to true IF the field is a verification/confirmation field (e.g., "Verify Candidate Name", "Confirm Password/Email"). Set false for primary fields.
+3. DO NOT map OTP fields (e.g. "Enter OTP Received on Email", "Mobile OTP"). Skip OTP fields completely.
+
+Return strictly valid JSON in this structure:
 {
-  "formTitle": "Form Title",
+  "formTitle": "Detected Form Title (e.g., BPSC Registration Form)",
   "mappings": [
-    { "match_label": "Field Label", "profile_key": "full_name", "is_verify": false }
+    { 
+      "selector": "#candidate_name_input",
+      "match_label": "Candidate Name (परीक्षार्थी का नाम)",
+      "profile_key": "full_name",
+      "is_verify": false,
+      "strategy": "css_selector"
+    },
+    { 
+      "selector": "#verify_candidate_name_input",
+      "match_label": "Verify Candidate Name",
+      "profile_key": "full_name",
+      "is_verify": true,
+      "strategy": "css_selector"
+    }
   ]
 }`
             }
@@ -71,6 +100,7 @@ Return JSON matching:
 
     if (jsonStart !== -1 && jsonEnd !== -1) {
       const parsed = JSON.parse(resText.substring(jsonStart, jsonEnd + 1));
+      console.log('[Gemini Form Mappings]:', JSON.stringify(parsed.mappings, null, 2));
       return {
         id: `recipe-${Date.now()}`,
         domain,
@@ -80,7 +110,7 @@ Return JSON matching:
       };
     }
   } catch (aiErr) {
-    console.error('[Gemini AI Fallback triggered]', aiErr);
+    console.error('[Gemini AI Parsing Fallback triggered]', aiErr);
   }
 
   return getFallbackRecipe(domain);
@@ -161,10 +191,13 @@ Return strictly JSON in the following schema:
 
     if (jsonStart !== -1 && jsonEnd !== -1) {
       const parsed = JSON.parse(resText.substring(jsonStart, jsonEnd + 1));
+
+      console.log("[Gemini Document Extraction Fallback]", resText)
       return {
         extractedProfile: parsed.extractedProfile || {},
         extractedFields: parsed.extractedFields || [],
         rawText: parsed.rawText || resText
+
       };
     }
 
@@ -172,6 +205,7 @@ Return strictly JSON in the following schema:
       extractedProfile: {},
       extractedFields: [],
       rawText: resText
+
     };
   } catch (err: any) {
     console.error('[Gemini Document Extraction Error]', err);
