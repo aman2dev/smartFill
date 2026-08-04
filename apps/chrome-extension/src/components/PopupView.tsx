@@ -27,6 +27,7 @@ import {
 import { UserSession } from '../services/authService';
 import { ExamLauncher } from './ExamLauncher';
 import { PopularExam } from '../services/popularExams';
+import { universalEngineFiller, activeExamRecipe } from '../services/contentScript';
 
 interface PopupViewProps {
   session: UserSession | null;
@@ -71,22 +72,31 @@ export const PopupView: React.FC<PopupViewProps> = ({
   const processFiles = (files: FileList | File[]) => {
     if (!files || files.length === 0) return;
 
-    const newDocs: StoredDocument[] = Array.from(files).map((file, idx) => ({
-      id: `doc-${Date.now()}-${idx}`,
-      name: file.name,
-      type: file.name.toLowerCase().includes('aadhaar') ? 'Aadhaar Card' : 'Degree Certificate',
-      fileType: file.name.endsWith('.pdf') ? 'pdf' : 'jpg',
-      sizeBytes: file.size,
-      uploadDate: new Date().toISOString(),
-      status: 'processed',
-      confidenceScore: 98,
-      extractedFields: [],
-    }));
-
-    const updated = [...tempDocs, ...newDocs];
-    setTempDocs(updated);
-    saveTempCustomerDocs(updated);
-    onNotify('success', 'Documents Added', `Added ${newDocs.length} customer document(s) to active session.`);
+    Array.from(files).forEach((file, idx) => {
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const base64Data = evt.target?.result as string;
+        const newDoc: StoredDocument = {
+          id: `doc-${Date.now()}-${idx}`,
+          name: file.name,
+          type: file.name.toLowerCase().includes('aadhaar') ? 'Aadhaar Card' : 'Degree Certificate',
+          fileType: file.name.endsWith('.pdf') ? 'pdf' : (file.type || 'image/jpeg') as any,
+          sizeBytes: file.size,
+          dataUrl: base64Data,
+          uploadDate: new Date().toISOString(),
+          status: 'processed',
+          confidenceScore: 98,
+          extractedFields: [],
+        };
+        setTempDocs((prev) => {
+          const updated = [...prev, newDoc];
+          saveTempCustomerDocs(updated);
+          return updated;
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+    onNotify('success', 'Documents Added', `Added ${files.length} customer document(s) to active session.`);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -129,43 +139,75 @@ export const PopupView: React.FC<PopupViewProps> = ({
     saveTempCustomerDocs(updated);
   };
 
-  const handleExtractData = () => {
+  const handleExtractData = async () => {
     if (tempDocs.length === 0) {
       onNotify('error', 'No Documents Uploaded', 'Please upload at least 1 customer document first.');
       return;
     }
 
     setIsExtracting(true);
-    setTimeout(() => {
-      const simulatedData: Record<string, string> = {
-        fullName: 'Amit Kumar Verma',
-        fatherName: 'Rajesh Verma',
-        motherName: 'Sunita Devi',
-        dob: '1998-05-12',
-        gender: 'Male',
-        category: 'OBC',
-        aadhaarNumber: '7849 2019 4832',
-        email: 'amit.verma98@gmail.com',
-        phone: '+91 98123 45678',
-        tenthBoard: 'BSEB Patna (Bihar Board)',
-        tenthRollNo: '2409182',
-        tenthPassingYear: '2014',
-        tenthMarksPercentage: '84.2%',
-        twelfthBoard: 'BSEB Patna',
-        twelfthRollNo: '1094821',
-        twelfthPassingYear: '2016',
-        twelfthMarksPercentage: '81.5%',
-        graduationDegree: 'B.Ed / B.Sc Physics',
-        graduationUniversity: 'Patna University',
-        graduationPassingYear: '2020',
-        graduationCgpaPercentage: '78.9%',
-      };
 
-      setExtractedFields(simulatedData);
-      saveTempExtractedFields(simulatedData);
-      setIsExtracting(false);
-      onNotify('success', 'AI Extraction Complete', 'Extracted 12 customer fields from uploaded documents.');
-    }, 1200);
+    try {
+      const docToExtract = tempDocs.find((d) => d.dataUrl) || tempDocs[0];
+      let base64String = docToExtract?.dataUrl || '';
+      
+      if (base64String.includes(',')) {
+        base64String = base64String.split(',')[1];
+      }
+
+      const backendUrl = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:4000';
+      const apiRes = await fetch(`${backendUrl}/api/v1/extract-document`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileBase64: base64String,
+          mimeType: docToExtract?.fileType === 'pdf' ? 'application/pdf' : 'image/jpeg',
+          userId: session?.user?.id
+        })
+      });
+
+      if (apiRes.ok) {
+        const json = await apiRes.json();
+        if (json.success && json.extractedProfile) {
+          const profile = json.extractedProfile;
+          const mappedExtracted: Record<string, string> = {
+            fullName: profile.full_name || '',
+            full_name: profile.full_name || '',
+            fatherName: profile.father_name || '',
+            father_name: profile.father_name || '',
+            motherName: profile.mother_name || '',
+            mother_name: profile.mother_name || '',
+            dob: profile.dob || '',
+            gender: profile.gender || '',
+            category: profile.category || '',
+            aadhaarNumber: profile.aadhaar_no || '',
+            aadhaar_no: profile.aadhaar_no || '',
+            email: profile.email || '',
+            phone: profile.phone || '',
+            address: profile.address || '',
+            city: profile.city || '',
+            state: profile.state || '',
+            pincode: profile.pincode || '',
+            panCard: profile.pan_no || ''
+          };
+
+          Object.keys(mappedExtracted).forEach((key) => {
+            if (!mappedExtracted[key]) delete mappedExtracted[key];
+          });
+
+          setExtractedFields(mappedExtracted);
+          saveTempExtractedFields(mappedExtracted);
+          setIsExtracting(false);
+          onNotify('success', 'AI Document Extraction Complete', `Extracted ${Object.keys(mappedExtracted).length} real fields from document.`);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('[Real AI Document Extraction Failed]', err);
+    }
+
+    setIsExtracting(false);
+    onNotify('error', 'Extraction Failed', 'Could not extract text from document. Ensure backend API is running.');
   };
 
   const handleStartNewCustomer = () => {
@@ -189,18 +231,103 @@ export const PopupView: React.FC<PopupViewProps> = ({
       return;
     }
 
+    const profilePayload = {
+      ...extractedFields,
+      full_name: extractedFields.fullName || extractedFields.full_name || '',
+      father_name: extractedFields.fatherName || extractedFields.father_name || '',
+      mother_name: extractedFields.motherName || extractedFields.mother_name || '',
+      dob: extractedFields.dob || '',
+      gender: extractedFields.gender || '',
+      category: extractedFields.category || '',
+      aadhaar_no: extractedFields.aadhaarNumber || extractedFields.aadhaar_no || extractedFields.aadhaar || '',
+      aadhaar: extractedFields.aadhaarNumber || extractedFields.aadhaar_no || extractedFields.aadhaar || '',
+      email: extractedFields.email || '',
+      phone: extractedFields.phone || '',
+      address: extractedFields.address || '',
+      city: extractedFields.city || '',
+      state: extractedFields.state || '',
+      pincode: extractedFields.pincode || '',
+      panCard: extractedFields.panCard || '',
+      accountNumber: extractedFields.accountNumber || '',
+      ifscCode: extractedFields.ifscCode || ''
+    };
+
     setIsAutofilling(true);
 
     try {
+      let filledCount = 0;
       if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs: any[]) => {
-          if (tabs[0]?.id) {
-            chrome.tabs.sendMessage(tabs[0].id, {
-              action: 'AUTOFILL_FORM',
-              payload: extractedFields,
-            });
+        const tabs = await new Promise<any[]>((resolve) =>
+          chrome.tabs.query({ active: true, currentWindow: true }, resolve)
+        );
+
+        if (tabs[0]?.id) {
+          let domain = 'localhost';
+          let htmlSnippet = '';
+          if (tabs[0]?.url) {
+            try {
+              domain = new URL(tabs[0].url).hostname;
+            } catch (e) {}
           }
-        });
+
+          // Step 1: Capture HTML snippet from target tab DOM
+          if (chrome.scripting && chrome.scripting.executeScript) {
+            try {
+              const htmlRes = await chrome.scripting.executeScript({
+                target: { tabId: tabs[0].id },
+                func: () => document.querySelector('form')?.outerHTML || document.body.outerHTML.slice(0, 15000)
+              });
+              if (htmlRes && htmlRes[0] && htmlRes[0].result) {
+                htmlSnippet = htmlRes[0].result;
+              }
+            } catch (e) {}
+          }
+
+          // Step 2: Fetch AI Recipe from Backend API / DB Cache
+          let recipeToUse = activeExamRecipe;
+          try {
+            const backendUrl = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:4000';
+            const apiRes = await fetch(`${backendUrl}/api/v1/extract-recipe`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                domain,
+                htmlSnippet,
+                userId: session.user.id
+              })
+            });
+
+            if (apiRes.ok) {
+              const json = await apiRes.json();
+              if (json.success && json.recipe && json.recipe.mappings) {
+                recipeToUse = json.recipe.mappings;
+                console.log(`[Backend AI Recipe Loaded] ${json.cached ? '(DB Cache Hit)' : '(Gemini AI Parsed)'}`, json.recipe);
+              }
+            }
+          } catch (apiErr) {
+            console.warn('[Backend API unreachable, using fallback recipe]', apiErr);
+          }
+
+          // Step 3: Execute Universal Engine Filler with AI Recipe
+          if (chrome.scripting && chrome.scripting.executeScript) {
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tabs[0].id },
+              func: universalEngineFiller,
+              args: [recipeToUse, profilePayload]
+            });
+            if (results && results[0] && typeof results[0].result === 'number') {
+              filledCount = results[0].result;
+            }
+          }
+
+          chrome.tabs.sendMessage(tabs[0].id, {
+            action: 'AUTOFILL_FORM',
+            payload: profilePayload
+          }).catch(() => {});
+        }
+      } else {
+        // Fallback for local testing
+        filledCount = universalEngineFiller(activeExamRecipe, profilePayload);
       }
 
       if (!sessionPaid) {
@@ -221,9 +348,9 @@ export const PopupView: React.FC<PopupViewProps> = ({
         onUpdateSession(updatedSession);
         setSessionPaid(true);
         setCustomerSessionPaid(true);
-        onNotify('success', 'Form Autofilled! (1 Credit Used)', `Remaining AI Credits: ${newCredits}`);
+        onNotify('success', `Form Autofilled! (${filledCount > 0 ? filledCount + ' fields filled' : '1 Credit Used'})`, `Remaining AI Credits: ${newCredits}`);
       } else {
-        onNotify('success', 'Form Autofilled!', 'Customer session active (0 additional credits charged).');
+        onNotify('success', `Form Autofilled! (${filledCount > 0 ? filledCount + ' fields filled' : '0 credits charged'})`, 'Customer session active.');
       }
     } catch (err: any) {
       onNotify('error', 'Autofill Failed', err.message || 'Failed to fill form on webpage.');
