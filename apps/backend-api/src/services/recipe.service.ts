@@ -56,7 +56,8 @@ export const extractRecipeService = async (
       m.selector.includes('nth-child') || 
       m.selector.includes('nth-of-type') ||
       m.selector.includes(':contains') ||
-      m.selector.includes(':has(')
+      m.selector.includes(':has(') ||
+      (m.selector.startsWith('#') && /^#\d+$/.test(m.selector))
     );
 
     if (hasValidSelectors && !hasInvalidSelectors) {
