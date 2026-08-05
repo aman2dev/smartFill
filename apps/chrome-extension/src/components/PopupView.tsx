@@ -275,7 +275,19 @@ export const PopupView: React.FC<PopupViewProps> = ({
             try {
               const htmlRes = await chrome.scripting.executeScript({
                 target: { tabId: tabs[0].id },
-                func: () => document.querySelector('form')?.outerHTML || document.body.outerHTML.slice(0, 15000)
+                func: () => {
+                  const elements = Array.from(document.querySelectorAll('input, select, textarea, label'));
+                  if (elements.length > 0) {
+                    return elements.map((el) => {
+                      if (el.tagName === 'LABEL') {
+                        return `<label for="${el.getAttribute('for') || ''}">${(el as HTMLElement).innerText || ''}</label>`;
+                      }
+                      const inp = el as HTMLInputElement;
+                      return `<${inp.tagName.toLowerCase()} id="${inp.id || ''}" name="${inp.name || ''}" type="${inp.type || ''}" placeholder="${inp.placeholder || ''}">`;
+                    }).join('\n');
+                  }
+                  return document.body.outerHTML.slice(0, 30000);
+                }
               });
               if (htmlRes && htmlRes[0] && htmlRes[0].result) {
                 htmlSnippet = htmlRes[0].result;
