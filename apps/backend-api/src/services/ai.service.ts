@@ -64,9 +64,10 @@ Task: Inspect every <input>, <select>, <textarea> in the HTML tree and generate 
 - ifscCode (Bank IFSC Code)
 
 CRITICAL AI SELECTOR RULES:
-1. "selector": Construct simple, clean, standard W3C CSS selectors supported natively by browser document.querySelector (e.g. "#inputId", "input[name='attrName']", "input[placeholder*='DD/MM/YYYY']", "input[name*='dob' i]"). NEVER output non-standard jQuery pseudo-selectors like ":contains()" or ":has()", and NEVER output fragile deep DOM tree paths like "div > div:nth-child(7)".
+1. "selector": Construct simple, clean, standard W3C CSS selectors supported natively by browser document.querySelector (e.g. "#inputId", "input[name='attrName']", "input[placeholder*='DD/MM/YYYY']", "input[name*='dob' i]"). If element ID is purely numeric (e.g. id="78248"), output attribute selector format '[id="78248"]' or 'input[name="78248"]' instead of '#78248'. NEVER output non-standard jQuery pseudo-selectors like ":contains()" or ":has()", and NEVER output fragile deep DOM tree paths like "div > div:nth-child(7)".
 2. "is_verify": Set to true IF the field is a verification/confirmation field (e.g., "Verify Candidate Name", "Confirm Password/Email"). Set false for primary fields.
-3. DO NOT map OTP fields (e.g. "Enter OTP Received on Email", "Mobile OTP"). Skip OTP fields completely.
+3. DO NOT map OTP fields or Reference Number / Application Number / Certificate Number fields (e.g. "Application Ref. No.", "Enter OTP Received"). Skip them completely.
+4. MULTILINGUAL MANDATE: Recognize fields in ALL languages (English, Hindi, regional scripts). Map 'मोबाइल'/'फोन' -> phone, 'ईमेल' -> email, 'लिंग' -> gender, 'नाम' -> full_name, 'पिता का नाम' -> father_name. Scan the entire HTML snippet thoroughly from top to bottom and return ALL available profile fields found.
 
 Return strictly valid JSON in this structure:
 {
