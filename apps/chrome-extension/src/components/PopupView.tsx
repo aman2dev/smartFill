@@ -12,7 +12,8 @@ import {
   UserCheck,
   Maximize2,
   FilePlus,
-  AlertCircle
+  AlertCircle,
+  QrCode
 } from 'lucide-react';
 import type { StoredDocument } from '../types';
 import {
@@ -26,6 +27,7 @@ import {
 } from '../services/storage';
 import { UserSession } from '../services/authService';
 import { ExamLauncher } from './ExamLauncher';
+import { QrUploadModal } from './QrUploadModal';
 import { PopularExam } from '../services/popularExams';
 import { universalEngineFiller, activeExamRecipe } from '../services/contentScript';
 
@@ -50,6 +52,7 @@ export const PopupView: React.FC<PopupViewProps> = ({
   const [selectedExam, setSelectedExam] = useState<PopularExam | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isPopupView, setIsPopupView] = useState(false);
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
 
   useEffect(() => {
     getTempCustomerDocsAsync().then((docs) => setTempDocs(docs));
@@ -475,20 +478,31 @@ export const PopupView: React.FC<PopupViewProps> = ({
             </h3>
           </div>
 
-          <label
-            onClick={handleAddFilesButtonClick}
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs transition-colors shadow-xs cursor-pointer"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span>Add Files</span>
-            <input
-              type="file"
-              multiple
-              accept="image/*,.pdf"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-          </label>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setIsQrModalOpen(true)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
+              title="Show QR code for customer to scan with their phone"
+            >
+              <QrCode className="w-3.5 h-3.5" />
+              <span>Scan QR to Upload</span>
+            </button>
+
+            <label
+              onClick={handleAddFilesButtonClick}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs transition-colors shadow-xs cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>Add Files</span>
+              <input
+                type="file"
+                multiple
+                accept="image/*,.pdf"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </label>
+          </div>
         </div>
 
         {isPopupView && (
@@ -620,6 +634,16 @@ export const PopupView: React.FC<PopupViewProps> = ({
           <span>{isAutofilling ? 'Autofilling Form...' : 'Auto Fill Form Now'}</span>
         </button>
       </div>
+
+      {/* QR Code Upload Modal */}
+      <QrUploadModal
+        isOpen={isQrModalOpen}
+        onClose={() => setIsQrModalOpen(false)}
+        onDocsReceived={(updatedDocs) => {
+          setTempDocs(updatedDocs);
+        }}
+        onNotify={onNotify}
+      />
 
     </div>
   );

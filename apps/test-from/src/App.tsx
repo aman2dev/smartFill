@@ -12,6 +12,7 @@ import {
   Copy,
   Layers
 } from 'lucide-react';
+import { MobileUpload } from './MobileUpload';
 
 type FormTab = 'govt' | 'job' | 'kyc';
 
@@ -24,6 +25,12 @@ interface LogEntry {
 }
 
 export function App() {
+  const isMobileUpload = window.location.pathname.includes('/upload') || new URLSearchParams(window.location.search).has('sessionId');
+
+  if (isMobileUpload) {
+    return <MobileUpload />;
+  }
+
   const [activeTab, setActiveTab] = useState<FormTab>('govt');
   const [submittedData, setSubmittedData] = useState<Record<string, any> | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
