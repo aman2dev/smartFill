@@ -55,10 +55,14 @@ Task: Inspect every <input>, <select>, <textarea> in the HTML tree and generate 
 - aadhaar_no (Aadhaar Number / Unique ID)
 - email (Email Address - NOT OTP input)
 - phone (Mobile Number - NOT OTP input)
-- address (Permanent / Correspondence Address)
-- city (City / District)
-- state (State)
-- pincode (Pin Code / Zip)
+- address (Permanent Address)
+- present_address (Correspondence / Present Address)
+- city (Permanent City / District)
+- present_city (Correspondence City)
+- state (Permanent State)
+- present_state (Correspondence State)
+- pincode (Permanent Pin Code)
+- present_pincode (Correspondence Pin Code)
 - panCard (PAN Card Number)
 - accountNumber (Bank Account Number)
 - ifscCode (Bank IFSC Code)
@@ -68,6 +72,8 @@ CRITICAL AI SELECTOR RULES:
 2. "is_verify": Set to true IF the field is a verification/confirmation field (e.g., "Verify Candidate Name", "Confirm Password/Email"). Set false for primary fields.
 3. DO NOT map OTP fields or Reference Number / Application Number / Certificate Number fields (e.g. "Application Ref. No.", "Enter OTP Received"). Skip them completely.
 4. MULTILINGUAL MANDATE: Recognize fields in ALL languages (English, Hindi, regional scripts). Map 'मोबाइल'/'फोन' -> phone, 'ईमेल' -> email, 'लिंग' -> gender, 'नाम' -> full_name, 'पिता का नाम' -> father_name. Scan the entire HTML snippet thoroughly from top to bottom and return ALL available profile fields found.
+5. PAIRED VERIFICATION MANDATE: Always output BOTH primary AND verification mappings when paired confirm/verify fields exist on the form (e.g. output BOTH 'Candidate Date of Birth' AND 'Confirm Candidate Date of Birth', both 'Candidate Name' AND 'Confirm Candidate Name'). Strip any red asterisks (*) or colons from match_label.
+6. ADDRESS & CHECKBOX MANDATE: Map Permanent Address vs Present/Correspondence Address distinctly. Map any 'Same as Permanent Address' or 'Same as Present Address' checkboxes to profile_key 'same_as_permanent'.
 
 Return strictly valid JSON in this structure:
 {
@@ -117,6 +123,11 @@ Return strictly valid JSON in this structure:
   return getFallbackRecipe(domain);
 };
 
+import crypto from 'crypto';
+
+// In-memory Document Extraction Cache (hash -> extracted JSON)
+const docExtractionCache = new Map<string, AIDocumentResult>();
+
 export interface AIDocumentResult {
   extractedProfile: Partial<StudentProfile>;
   extractedFields: ExtractedField[];
@@ -133,6 +144,13 @@ export const extractDocumentWithAI = async (
       extractedFields: [],
       rawText: 'Gemini API key is not configured.'
     };
+  }
+
+  // Fast SHA256 document hashing for instant 0ms repeated uploads
+  const docHash = crypto.createHash('sha256').update(base64Data).digest('hex');
+  if (docExtractionCache.has(docHash)) {
+    console.log(`⚡ [Document Extraction Cache Hit] Returning 0ms cached extraction for doc hash: ${docHash.slice(0, 10)}...`);
+    return docExtractionCache.get(docHash)!;
   }
 
   try {
@@ -192,22 +210,22 @@ Return strictly JSON in the following schema:
 
     if (jsonStart !== -1 && jsonEnd !== -1) {
       const parsed = JSON.parse(resText.substring(jsonStart, jsonEnd + 1));
-
-      console.log("[Gemini Document Extraction Fallback]", resText)
-      return {
+      const resultObj: AIDocumentResult = {
         extractedProfile: parsed.extractedProfile || {},
         extractedFields: parsed.extractedFields || [],
         rawText: parsed.rawText || resText
-
       };
+      docExtractionCache.set(docHash, resultObj);
+      return resultObj;
     }
 
-    return {
+    const fallbackObj: AIDocumentResult = {
       extractedProfile: {},
       extractedFields: [],
       rawText: resText
-
     };
+    docExtractionCache.set(docHash, fallbackObj);
+    return fallbackObj;
   } catch (err: any) {
     console.error('[Gemini Document Extraction Error]', err);
     throw err;
