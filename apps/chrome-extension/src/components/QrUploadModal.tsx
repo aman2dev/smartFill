@@ -1,8 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import QRCode from 'react-qr-code';
-import { QrCode, Smartphone, X, Copy, Check, RefreshCw } from 'lucide-react';
+import { QrCode, Smartphone, X, Copy, Check, RefreshCw, UserCheck, Inbox, Clock, ShieldCheck } from 'lucide-react';
 import type { StoredDocument } from '../types';
-import { saveTempCustomerDocs, getTempCustomerDocsAsync } from '../services/storage';
+import { saveTempExtractedFieldsSync, getTempExtractedFieldsAsync } from '../services/storage';
+
+interface PendingQueueItem {
+  id: string;
+  operatorId: string;
+  customerName: string;
+  customerPhone?: string;
+  createdAt: number;
+}
 
 interface QrUploadModalProps {
   isOpen: boolean;
@@ -14,123 +22,108 @@ interface QrUploadModalProps {
 export const QrUploadModal: React.FC<QrUploadModalProps> = ({
   isOpen,
   onClose,
-  onDocsReceived,
   onNotify,
 }) => {
-  const [sessionId, setSessionId] = useState<string>('');
-  const [wsStatus, setWsStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'received'>('disconnected');
-  const [receivedCount, setReceivedCount] = useState<number>(0);
+  const [operatorId] = useState<string>('operator_01');
+  const [localIpHost, setLocalIpHost] = useState<string>('localhost:4000');
   const [copied, setCopied] = useState<boolean>(false);
-  
+  const [pendingQueue, setPendingQueue] = useState<PendingQueueItem[]>([]);
+  const [isConsuming, setIsConsuming] = useState<string | null>(null);
 
-  const generateNewSession = () => {
-    const newId = 'sess_' + Math.random().toString(36).substring(2, 9);
-    setSessionId(newId);
-    setReceivedCount(0);
-    setWsStatus('connecting');
-    return newId;
-  };
+  const backendUrl = import.meta.env.VITE_BACKEND_API_URL || `http://${localIpHost}`;
+  const fixedMobileQrUrl = `${backendUrl}/upload/${operatorId}`;
+
+  // Fetch pending customer queue items from ephemeral RAM queue
+  const fetchQueue = useCallback(async () => {
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/queue/pending?operatorId=${operatorId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.items)) {
+          setPendingQueue(data.items);
+        }
+      }
+    } catch (err) {
+      console.warn('[Queue fetch error]', err);
+    }
+  }, [backendUrl, operatorId]);
 
   useEffect(() => {
     if (!isOpen) return;
 
-    const currentSessionId = generateNewSession();
-    const backendUrl = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:4000';
-    
-  
+    fetchQueue();
+    const interval = setInterval(fetchQueue, 3000); // 3s polling fallback
 
+    // WebSocket real-time notification setup
     const wsProtocol = backendUrl.startsWith('https') ? 'wss' : 'ws';
     const wsHost = backendUrl.replace(/^https?:\/\//, '');
-    const wsUrl = `${wsProtocol}://${wsHost}?sessionId=${currentSessionId}&role=extension`;
+    const wsUrl = `${wsProtocol}://${wsHost}?sessionId=${operatorId}&role=extension`;
 
-    console.log('[WebSocket Connecting]', wsUrl);
     let ws: WebSocket | null = null;
-
     try {
       ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        setWsStatus('connected');
-        console.log('[WebSocket Connected] Extension listening for session:', currentSessionId);
-      };
-
-      ws.onmessage = async (event) => {
+      ws.onmessage = (event) => {
         try {
-          if (typeof event.data !== 'string') return;
           const payload = JSON.parse(event.data);
-
-          if (payload.type === 'SYSTEM_EVENT' && payload.event === 'PAIR_CONNECTED') {
-            onNotify?.('info', 'Customer Phone Connected 📱', 'Customer scanned the QR code!');
-            return;
+          if (payload.type === 'NEW_CUSTOMER_QUEUE') {
+            onNotify?.('info', 'New Customer Upload! 📱', `Received document from ${payload.item.customerName}`);
+            fetchQueue();
           }
-
-          if (payload.type === 'DOC_UPLOAD' || payload.docName || payload.dataUrl) {
-            const docName = payload.fileName || payload.docName || 'Customer_Document.jpg';
-            const fileType = payload.mimeType?.includes('pdf') || docName.endsWith('.pdf') ? 'pdf' : 'image/jpeg';
-            const base64Data = payload.dataUrl || payload.data || '';
-
-            const newDoc: StoredDocument = {
-              id: `qr-doc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-              name: docName,
-              type: payload.docType || 'Customer Upload',
-              fileType: fileType as any,
-              sizeBytes: payload.size || base64Data.length || 1024,
-              dataUrl: base64Data.startsWith('data:') ? base64Data : `data:${fileType};base64,${base64Data}`,
-              uploadDate: new Date().toISOString(),
-              status: 'processed',
-              confidenceScore: 99,
-              extractedFields: [],
-            };
-
-            const existingDocs = await getTempCustomerDocsAsync();
-            const updatedDocs = [...existingDocs, newDoc];
-            await saveTempCustomerDocs(updatedDocs);
-
-            setReceivedCount((prev) => prev + 1);
-            setWsStatus('received');
-            onDocsReceived?.(updatedDocs);
-            onNotify?.('success', 'Document Received! 📄', `Received "${docName}" from customer's phone.`);
-          }
-        } catch (err) {
-          console.error('[WebSocket Payload Error]', err);
-        }
+        } catch (e) {}
       };
-
-      ws.onerror = (err) => {
-        console.warn('[WebSocket Error]', err);
-        setWsStatus('disconnected');
-      };
-
-      ws.onclose = () => {
-        setWsStatus('disconnected');
-      };
-    } catch (err) {
-      console.error('[WebSocket Init Failed]', err);
-      setWsStatus('disconnected');
-    }
+    } catch (err) {}
 
     return () => {
+      clearInterval(interval);
       if (ws) ws.close();
     };
-  }, [isOpen]);
+  }, [isOpen, fetchQueue, backendUrl, operatorId, onNotify]);
 
-  const [localIpHost, setLocalIpHost] = useState<string>('10.228.67.37:5173');
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(fixedMobileQrUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+    onNotify?.('info', 'Link Copied', 'Fixed Operator QR URL copied to clipboard.');
+  };
+
+  const handleConsumeItem = async (itemId: string, customerName: string) => {
+    setIsConsuming(itemId);
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/queue/consume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: itemId, operatorId })
+      });
+
+      const data = await res.json();
+      if (data.success && data.item && data.item.extractedProfile) {
+        // Save extracted profile to temp extracted fields storage
+        const currentProfile = await getTempExtractedFieldsAsync();
+        const updatedProfile = {
+          ...currentProfile,
+          ...data.item.extractedProfile
+        };
+        saveTempExtractedFieldsSync(updatedProfile);
+
+        // Remove consumed item from state list immediately
+        setPendingQueue((prev) => prev.filter((q) => q.id !== itemId));
+
+        onNotify?.('success', `Loaded ${customerName}! 📄`, 'Customer profile loaded into Master Vault. Ready to auto-fill form!');
+      } else {
+        onNotify?.('error', 'Failed to load profile', data.error || 'Queue item expired.');
+      }
+    } catch (err: any) {
+      onNotify?.('error', 'Network Error', err.message || 'Could not connect to backend.');
+    } finally {
+      setIsConsuming(null);
+    }
+  };
 
   if (!isOpen) return null;
 
-  // Direct Mobile Web Upload URL
-  const mobileUploadUrl = `http://${localIpHost}/upload?sessionId=${sessionId}`;
-
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(mobileUploadUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-    onNotify?.('info', 'Link Copied', 'Mobile upload URL copied to clipboard.');
-  };
-
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 relative space-y-5">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full p-6 relative space-y-5">
         
         {/* Close Button */}
         <button
@@ -146,82 +139,104 @@ export const QrUploadModal: React.FC<QrUploadModalProps> = ({
             <QrCode className="w-6 h-6" />
           </div>
           <h3 className="text-lg font-bold text-slate-900 tracking-tight">
-            Customer Mobile QR Upload
+            Fixed Operator Desk QR Code
           </h3>
           <p className="text-xs text-slate-500">
-            Ask customer to scan this QR code with their phone camera to upload documents directly to your PC.
+            Print or display this QR code at your desk. Customers scan it with their phone camera to send documents directly to your computer queue.
           </p>
         </div>
 
-        {/* QR Code Container */}
-        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 text-center space-y-3">
-          <div className="bg-white p-4 rounded-xl inline-block border border-slate-200 shadow-xs">
-            {sessionId ? (
-              <QRCode value={mobileUploadUrl} size={180} />
-            ) : (
-              <div className="w-[180px] h-[180px] flex items-center justify-center text-slate-400">
-                Generating QR...
+        {/* Fixed QR Code & Queue Section */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+          
+          {/* Permanent Fixed QR Code */}
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center space-y-2">
+            <div className="bg-white p-3 rounded-xl inline-block border border-slate-200 shadow-xs">
+              <QRCode value={fixedMobileQrUrl} size={140} />
+            </div>
+            <div className="text-[11px] font-medium text-slate-600">
+              Desk QR Code &bull; <span className="font-mono text-orange-600">{operatorId}</span>
+            </div>
+          </div>
+
+          {/* Incoming Customer Live Queue */}
+          <div className="bg-slate-900 text-white rounded-2xl p-4 border border-slate-800 space-y-3 min-h-[190px] flex flex-col justify-between">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-200 uppercase tracking-wider">
+                <Inbox className="w-4 h-4 text-orange-400" />
+                <span>Customer Queue</span>
               </div>
-            )}
-          </div>
+              <span className="bg-orange-500/20 text-orange-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-orange-500/30">
+                {pendingQueue.length} Pending
+              </span>
+            </div>
 
-          {/* Connection Status Badge */}
-          <div className="flex items-center justify-center space-x-2">
-            <span
-              className={`w-2.5 h-2.5 rounded-full ${
-                wsStatus === 'connected' || wsStatus === 'received'
-                  ? 'bg-emerald-500 animate-pulse'
-                  : wsStatus === 'connecting'
-                  ? 'bg-amber-500'
-                  : 'bg-red-500'
-              }`}
-            />
-            <span className="text-xs font-semibold text-slate-700">
-              {wsStatus === 'connected'
-                ? 'Ready! Waiting for customer scan...'
-                : wsStatus === 'received'
-                ? `Received ${receivedCount} file(s) from phone!`
-                : wsStatus === 'connecting'
-                ? 'Connecting to WebSocket...'
-                : 'WebSocket Disconnected'}
-            </span>
-          </div>
-        </div>
+            {/* Queue List */}
+            <div className="space-y-2 overflow-y-auto max-h-[130px] pr-1">
+              {pendingQueue.length === 0 ? (
+                <div className="text-center py-6 space-y-1 text-slate-500">
+                  <Smartphone className="w-6 h-6 mx-auto text-slate-600" />
+                  <p className="text-xs font-medium">Waiting for customers to scan QR...</p>
+                </div>
+              ) : (
+                pendingQueue.map((item) => (
+                  <div key={item.id} className="bg-slate-800 border border-slate-700/80 rounded-xl p-2.5 flex items-center justify-between">
+                    <div className="space-y-0.5 text-left">
+                      <div className="text-xs font-bold text-white flex items-center space-x-1">
+                        <span>{item.customerName}</span>
+                      </div>
+                      {item.customerPhone && (
+                        <div className="text-[10px] text-slate-400 font-mono">📱 {item.customerPhone}</div>
+                      )}
+                      <div className="text-[9px] text-slate-500 flex items-center space-x-1">
+                        <Clock className="w-2.5 h-2.5" />
+                        <span>{Math.round((Date.now() - item.createdAt) / 1000)}s ago</span>
+                      </div>
+                    </div>
 
-        {/* Mobile Upload Link & Copy */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block">
-              PC Local IP & Port
-            </label>
-            <div className="flex items-center space-x-1 text-[10px]">
-              <button
-                onClick={() => setLocalIpHost('10.228.67.37:5173')}
-                className={`px-1.5 py-0.5 rounded ${localIpHost.endsWith(':5173') ? 'bg-orange-500 text-white font-bold' : 'bg-slate-100 text-slate-600'}`}
-              >
-                :5173 (App)
-              </button>
-              <button
-                onClick={() => setLocalIpHost('10.228.67.37:4000')}
-                className={`px-1.5 py-0.5 rounded ${localIpHost.endsWith(':4000') ? 'bg-orange-500 text-white font-bold' : 'bg-slate-100 text-slate-600'}`}
-              >
-                :4000 (API)
+                    <button
+                      onClick={() => handleConsumeItem(item.id, item.customerName)}
+                      disabled={isConsuming === item.id}
+                      className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold text-[11px] transition-all cursor-pointer disabled:opacity-50 flex items-center space-x-1 shrink-0"
+                    >
+                      <UserCheck className="w-3 h-3" />
+                      <span>{isConsuming === item.id ? 'Loading...' : 'Load & Fill'}</span>
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="text-[10px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800">
+              <span className="flex items-center space-x-1">
+                <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                <span>Zero DB Storage (RAM Only)</span>
+              </span>
+              <button onClick={fetchQueue} className="text-orange-400 hover:text-orange-300">
+                <RefreshCw className="w-3 h-3" />
               </button>
             </div>
           </div>
-          
+
+        </div>
+
+        {/* Mobile Upload Link & Copy */}
+        <div className="space-y-2 pt-2 border-t border-slate-100">
+          <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block">
+            Public Upload Link
+          </label>
           <div className="flex items-center space-x-2 bg-slate-100 border border-slate-200 rounded-xl p-2 text-xs">
             <input
               type="text"
               value={localIpHost}
               onChange={(e) => setLocalIpHost(e.target.value)}
-              placeholder="e.g. 10.228.67.37:5173"
+              placeholder="e.g. 10.228.67.37:4000"
               className="bg-white border border-slate-300 rounded px-2 py-0.5 text-slate-800 outline-none font-mono text-[11px] w-36"
             />
             <input
               type="text"
               readOnly
-              value={mobileUploadUrl}
+              value={fixedMobileQrUrl}
               className="bg-transparent flex-1 text-slate-600 truncate outline-none font-mono text-[10px]"
             />
             <button
@@ -232,21 +247,6 @@ export const QrUploadModal: React.FC<QrUploadModalProps> = ({
               <span>{copied ? 'Copied' : 'Copy'}</span>
             </button>
           </div>
-        </div>
-
-        {/* Refresh Session Button */}
-        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs text-slate-500">
-          <div className="flex items-center space-x-1">
-            <Smartphone className="w-4 h-4 text-orange-500" />
-            <span>Session: <strong className="font-mono text-slate-800">{sessionId}</strong></span>
-          </div>
-          <button
-            onClick={() => generateNewSession()}
-            className="flex items-center space-x-1 text-orange-600 hover:text-orange-700 font-semibold cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>New QR</span>
-          </button>
         </div>
 
       </div>

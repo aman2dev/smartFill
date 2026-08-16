@@ -91,6 +91,20 @@ class SessionManager {
     }
 
     /**
+     * Notifies all extension sockets associated with an operatorId about a new customer upload.
+     */
+    public notifyOperatorQueueUpdate(operatorId: string, payload: any): void {
+        const messageStr = JSON.stringify(payload);
+        for (const [sessionId, session] of this.sessions.entries()) {
+            if (sessionId === operatorId || sessionId.includes(operatorId)) {
+                if (session.extension?.readyState === WebSocket.OPEN) {
+                    session.extension.send(messageStr);
+                }
+            }
+        }
+    }
+
+    /**
      * Removes sessions older than 30 minutes to prevent memory leaks.
      */
     private cleanupStaleSessions(): void {
