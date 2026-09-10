@@ -4,5 +4,5 @@ dotenv.config();
 
 export const config = {
   port: process.env.PORT || 4000,
-  geminiApiKey: process.env.GEMINI_API_KEY || ''
+  geminiApiKey: process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || ''
 };

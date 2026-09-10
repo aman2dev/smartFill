@@ -17,7 +17,7 @@ export interface ServiceResult {
 export const extractRecipeService = async (
   payload: ExtractFormRequest
 ): Promise<ServiceResult> => {
-  const { htmlSnippet, domain, userId } = payload;
+  const { htmlSnippet, screenshotBase64, elementsSummary, domain, userId } = payload;
 
   if (!domain) {
     return {
@@ -94,7 +94,7 @@ export const extractRecipeService = async (
   console.log(`[Cache Miss] Generating recipe via Gemini for domain: ${domain}`);
 
   // 3. Dynamic Gemini AI Parsing Generation
-  const recipe: ExamRecipe = await parseFormWithAI(domain, htmlSnippet);
+  const recipe: ExamRecipe = await parseFormWithAI(domain, htmlSnippet, screenshotBase64, elementsSummary);
 
   // 4. Save newly generated recipe to DB Cache & deduct credit (using upsert to prevent unique constraint conflict)
   try {

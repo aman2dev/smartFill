@@ -1,6 +1,6 @@
 import { ai } from '../config/gemini.js';
 import { config } from '../config/env.js';
-import type { ExamRecipe, StudentProfile, ExtractedField } from '@smartFill/types';
+import type { ExamRecipe, StudentProfile, ExtractedField, InteractiveElementSummary } from '@smartFill/types';
 
 export const getFallbackRecipe = (domain: string): ExamRecipe => ({
   id: `fallback-${Date.now()}`,
@@ -24,28 +24,57 @@ export const getFallbackRecipe = (domain: string): ExamRecipe => ({
 
 export const parseFormWithAI = async (
   domain: string,
-  htmlSnippet?: string
+  htmlSnippet?: string,
+  screenshotBase64?: string,
+  elementsSummary?: InteractiveElementSummary[]
 ): Promise<ExamRecipe> => {
-  if (!config.geminiApiKey || !htmlSnippet) {
+  if (!config.geminiApiKey || (!htmlSnippet && !screenshotBase64 && (!elementsSummary || elementsSummary.length === 0))) {
     return getFallbackRecipe(domain);
   }
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              text: `You are an expert Web Form Parser for Government Application portals.
-Analyze this HTML snippet from website domain (${domain}):
+    const parts: any[] = [];
 
+    // Multimodal Part 1: Page visual screenshot if provided
+    if (screenshotBase64) {
+      const approxKb = Math.round((screenshotBase64.length * 0.75) / 1024);
+      console.log(`[Gemini AI] 📸 Multimodal Vision Active: Processing page screenshot (${approxKb} KB) for domain: ${domain}`);
+      parts.push({
+        inlineData: {
+          mimeType: 'image/jpeg',
+          data: screenshotBase64
+        }
+      });
+    } else {
+      console.log(`[Gemini AI] 📄 DOM-Only Mode: No screenshot provided, parsing text elements for domain: ${domain}`);
+    }
+
+    // Prepare contextual text payload with interactive element inventory & HTML snippet
+    let contextDescription = `You are an expert AI Web Form Parser and Visual Layout Grounding Engine for Government Application portals.
+Analyze this website domain (${domain})${screenshotBase64 ? ' using BOTH the attached visual page screenshot and the DOM interactive elements' : ' using the DOM structure'}:
+
+`;
+
+    if (elementsSummary && elementsSummary.length > 0) {
+      contextDescription += `### Interactive DOM Form Elements Inventory:
+\`\`\`json
+${JSON.stringify(elementsSummary.slice(0, 100), null, 2)}
+\`\`\`
+
+`;
+    }
+
+    if (htmlSnippet) {
+      contextDescription += `### HTML Form Structure Snippet:
 \`\`\`html
 ${htmlSnippet.slice(0, 15000)}
 \`\`\`
 
-Task: Inspect every <input>, <select>, <textarea> in the HTML tree and generate exact CSS selectors (e.g. "#txt_candidate_name", "input[name='email']", "select#gender") mapped to standard profile JSON keys:
+`;
+    }
+
+    contextDescription += `Task: Correlate each interactive element (input, select, textarea) with its visual label, section context, and placeholder.
+Map them to the standard profile JSON keys:
 - full_name (Candidate / Applicant Name)
 - father_name (Father's Name)
 - mother_name (Mother's Name)
@@ -67,12 +96,12 @@ Task: Inspect every <input>, <select>, <textarea> in the HTML tree and generate 
 - accountNumber (Bank Account Number)
 - ifscCode (Bank IFSC Code)
 
-CRITICAL AI SELECTOR RULES:
-1. "selector": Construct simple, clean, standard W3C CSS selectors supported natively by browser document.querySelector (e.g. "#inputId", "input[name='attrName']", "input[placeholder*='DD/MM/YYYY']", "input[name*='dob' i]"). If element ID is purely numeric (e.g. id="78248"), output attribute selector format '[id="78248"]' or 'input[name="78248"]' instead of '#78248'. NEVER output non-standard jQuery pseudo-selectors like ":contains()" or ":has()", and NEVER output fragile deep DOM tree paths like "div > div:nth-child(7)".
+CRITICAL GROUNDING & SELECTOR RULES:
+1. "selector": Construct simple, clean, standard W3C CSS selectors supported natively by browser document.querySelector (e.g. "#inputId", "input[name='attrName']", "input[placeholder*='DD/MM/YYYY']", "input[name*='dob' i]"). If element ID is purely numeric (e.g. id="78248"), output attribute selector format '[id="78248"]' or 'input[name="78248"]' instead of '#78248'. NEVER output ":nth-of-type()" or ":nth-child()" pseudo-selectors, because inputs inside separate column containers are not CSS siblings and these will return 0 elements! NEVER output non-standard jQuery pseudo-selectors like ":contains()" or ":has()", and NEVER output fragile deep DOM tree paths like "div > div:nth-child(7)".
 2. "is_verify": Set to true IF the field is a verification/confirmation field (e.g., "Verify Candidate Name", "Confirm Password/Email"). Set false for primary fields.
 3. DO NOT map OTP fields or Reference Number / Application Number / Certificate Number fields (e.g. "Application Ref. No.", "Enter OTP Received"). Skip them completely.
-4. MULTILINGUAL MANDATE: Recognize fields in ALL languages (English, Hindi, regional scripts). Map 'मोबाइल'/'फोन' -> phone, 'ईमेल' -> email, 'लिंग' -> gender, 'नाम' -> full_name, 'पिता का नाम' -> father_name. Scan the entire HTML snippet thoroughly from top to bottom and return ALL available profile fields found.
-5. PAIRED VERIFICATION MANDATE: Always output BOTH primary AND verification mappings when paired confirm/verify fields exist on the form (e.g. output BOTH 'Candidate Date of Birth' AND 'Confirm Candidate Date of Birth', both 'Candidate Name' AND 'Confirm Candidate Name'). Strip any red asterisks (*) or colons from match_label.
+4. MULTILINGUAL & VISUAL MANDATE: Recognize fields in ALL languages (English, Hindi, regional scripts: 'मोबाइल'/'फोन' -> phone, 'ईमेल' -> email, 'लिंग' -> gender, 'नाम' -> full_name, 'पिता का नाम' -> father_name). Visually verify labels next to boxes in the screenshot.
+5. PAIRED VERIFICATION MANDATE: Always output BOTH primary AND verification mappings when paired confirm/verify fields exist on the form (e.g. output BOTH 'Candidate Date of Birth' AND 'Confirm Candidate Date of Birth'). Strip any red asterisks (*) or colons from match_label.
 6. ADDRESS & CHECKBOX MANDATE: Map Permanent Address vs Present/Correspondence Address distinctly. Map any 'Same as Permanent Address' or 'Same as Present Address' checkboxes to profile_key 'same_as_permanent'.
 
 Return strictly valid JSON in this structure:
@@ -94,9 +123,16 @@ Return strictly valid JSON in this structure:
       "strategy": "css_selector"
     }
   ]
-}`
-            }
-          ]
+}`;
+
+    parts.push({ text: contextDescription });
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        {
+          role: 'user',
+          parts
         }
       ]
     });
@@ -107,7 +143,7 @@ Return strictly valid JSON in this structure:
 
     if (jsonStart !== -1 && jsonEnd !== -1) {
       const parsed = JSON.parse(resText.substring(jsonStart, jsonEnd + 1));
-      console.log('[Gemini Form Mappings]:', JSON.stringify(parsed.mappings, null, 2));
+      console.log(`[Gemini Multimodal Form Mappings for ${domain}]:`, JSON.stringify(parsed.mappings, null, 2));
       return {
         id: `recipe-${Date.now()}`,
         domain,

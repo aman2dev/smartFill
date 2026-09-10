@@ -16,6 +16,7 @@ import {
   QrCode
 } from 'lucide-react';
 import type { StoredDocument } from '../types';
+import type { InteractiveElementSummary } from '@smartFill/types';
 import {
   getTempCustomerDocsAsync,
   saveTempCustomerDocs,
@@ -267,38 +268,126 @@ export const PopupView: React.FC<PopupViewProps> = ({
         if (tabs[0]?.id) {
           let domain = 'localhost';
           let htmlSnippet = '';
+          let screenshotBase64 = '';
+          const elementsSummary: InteractiveElementSummary[] = [];
+
           if (tabs[0]?.url) {
             try {
               domain = new URL(tabs[0].url).hostname;
             } catch (e) {}
           }
 
-          // Step 1: Capture HTML snippet from target tab DOM
-          if (chrome.scripting && chrome.scripting.executeScript) {
+          // Step 1: Capture High-Precision Visual Page Screenshot (Multimodal Vision)
+          if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.captureVisibleTab) {
             try {
-              const htmlRes = await chrome.scripting.executeScript({
-                target: { tabId: tabs[0].id },
-                func: () => {
-                  const elements = Array.from(document.querySelectorAll('input, select, textarea, label'));
-                  if (elements.length > 0) {
-                    return elements.map((el) => {
-                      if (el.tagName === 'LABEL') {
-                        return `<label for="${el.getAttribute('for') || ''}">${(el as HTMLElement).innerText || ''}</label>`;
-                      }
-                      const inp = el as HTMLInputElement;
-                      return `<${inp.tagName.toLowerCase()} id="${inp.id || ''}" name="${inp.name || ''}" type="${inp.type || ''}" placeholder="${inp.placeholder || ''}">`;
-                    }).join('\n');
+              console.log('[smartFill] 📸 Capturing active tab screenshot for Multimodal AI Form Analysis...');
+              const screenshotDataUrl = await new Promise<string>((resolve) => {
+                chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 70 }, (dataUrl?: string) => {
+                  if (chrome.runtime.lastError) {
+                    console.warn('[smartFill] ⚠️ Screenshot capture skipped:', chrome.runtime.lastError.message);
+                    resolve('');
+                  } else {
+                    resolve(dataUrl || '');
                   }
-                  return document.body.outerHTML.slice(0, 30000);
-                }
+                });
               });
-              if (htmlRes && htmlRes[0] && htmlRes[0].result) {
-                htmlSnippet = htmlRes[0].result;
+              if (screenshotDataUrl && screenshotDataUrl.includes(',')) {
+                screenshotBase64 = screenshotDataUrl.split(',')[1];
+                const approxKb = Math.round((screenshotBase64.length * 0.75) / 1024);
+                console.log(`[smartFill] ✅ Screenshot captured successfully (${approxKb} KB). Sending to Gemini Vision.`);
+              } else {
+                console.warn('[smartFill] ⚠️ Screenshot capture returned empty; proceeding with DOM structure only.');
               }
-            } catch (e) {}
+            } catch (ssErr) {
+              console.warn('[smartFill] ⚠️ Screenshot capture non-fatal error:', ssErr);
+            }
           }
 
-          // Step 2: Fetch AI Recipe from Backend API / DB Cache
+          // Step 2: Extract Clean Interactive DOM Elements & HTML snippet from all frames
+          if (chrome.scripting && chrome.scripting.executeScript) {
+            try {
+              const domRes = await chrome.scripting.executeScript({
+                target: { tabId: tabs[0].id, allFrames: true },
+                func: () => {
+                  const interactiveInputs = Array.from(
+                    document.querySelectorAll('input:not([type="hidden"]), select, textarea')
+                  );
+
+                  const summaries = interactiveInputs.map((el) => {
+                    const inp = el as HTMLInputElement;
+                    const tagName = inp.tagName.toLowerCase();
+                    const id = inp.id || '';
+                    const name = inp.name || '';
+                    const type = inp.type || '';
+                    const placeholder = inp.placeholder || '';
+
+                    // Inspect nearest label or enclosing table/group container text
+                    let nearestText = '';
+                    if (id) {
+                      const explicitLabel = document.querySelector(`label[for="${id}"]`);
+                      if (explicitLabel) nearestText = (explicitLabel as HTMLElement).innerText || '';
+                    }
+                    if (!nearestText) {
+                      const container = inp.closest('tr, td, .form-group, .form-item, div, p');
+                      if (container) {
+                        nearestText = ((container as HTMLElement).innerText || '').replace(/\s+/g, ' ').slice(0, 120);
+                      }
+                    }
+
+                    // Build standard CSS selector hint
+                    let selectorHint = '';
+                    if (id) {
+                      selectorHint = id.match(/^\d+$/) ? `[id="${id}"]` : `#${id}`;
+                    } else if (name) {
+                      selectorHint = `${tagName}[name="${name}"]`;
+                    } else if (placeholder) {
+                      selectorHint = `${tagName}[placeholder*="${placeholder.slice(0, 20)}"]`;
+                    }
+
+                    return {
+                      id,
+                      name,
+                      type,
+                      tagName,
+                      placeholder,
+                      nearestText: nearestText.trim(),
+                      selectorHint
+                    };
+                  });
+
+                  const snippet = interactiveInputs.map((inp) => {
+                    const idStr = inp.id ? ` id="${inp.id}"` : '';
+                    const nameStr = inp.getAttribute('name') ? ` name="${inp.getAttribute('name')}"` : '';
+                    const typeStr = inp.getAttribute('type') ? ` type="${inp.getAttribute('type')}"` : '';
+                    const placeholderStr = (inp as HTMLInputElement).placeholder ? ` placeholder="${(inp as HTMLInputElement).placeholder}"` : '';
+                    return `<${inp.tagName.toLowerCase()}${idStr}${nameStr}${typeStr}${placeholderStr}>`;
+                  }).join('\n');
+
+                  return {
+                    summaries,
+                    snippet
+                  };
+                }
+              });
+
+              if (domRes && domRes.length > 0) {
+                domRes.forEach((frameRes: any) => {
+                  if (frameRes.result) {
+                    if (Array.isArray(frameRes.result.summaries)) {
+                      elementsSummary.push(...frameRes.result.summaries);
+                    }
+                    if (frameRes.result.snippet) {
+                      htmlSnippet += (htmlSnippet ? '\n' : '') + frameRes.result.snippet;
+                    }
+                  }
+                });
+              }
+            } catch (e) {
+              console.warn('[DOM elements extraction error]', e);
+            }
+          }
+
+          // Step 3: Fetch AI Recipe from Backend API / DB Cache (Dual-Input Multimodal Grounding)
           let recipeToUse = activeExamRecipe;
           try {
             const backendUrl = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:4000';
@@ -308,6 +397,8 @@ export const PopupView: React.FC<PopupViewProps> = ({
               body: JSON.stringify({
                 domain,
                 htmlSnippet,
+                screenshotBase64,
+                elementsSummary,
                 userId: session.user.id
               })
             });
@@ -316,22 +407,22 @@ export const PopupView: React.FC<PopupViewProps> = ({
               const json = await apiRes.json();
               if (json.success && json.recipe && json.recipe.mappings) {
                 recipeToUse = json.recipe.mappings;
-                console.log(`[Backend AI Recipe Loaded] ${json.cached ? '(DB Cache Hit)' : '(Gemini AI Parsed)'}`, json.recipe);
+                console.log(`[Backend AI Recipe Loaded] ${json.cached ? '(DB Cache Hit)' : '(Gemini Multimodal Grounded)'}`, json.recipe);
               }
             }
           } catch (apiErr) {
             console.warn('[Backend API unreachable, using fallback recipe]', apiErr);
           }
 
-          // Step 3: Execute Universal Engine Filler with AI Recipe
+          // Step 4: Execute Universal Engine Filler across all frames with AI Recipe
           if (chrome.scripting && chrome.scripting.executeScript) {
             const results = await chrome.scripting.executeScript({
-              target: { tabId: tabs[0].id },
+              target: { tabId: tabs[0].id, allFrames: true },
               func: universalEngineFiller,
               args: [recipeToUse, profilePayload]
             });
-            if (results && results[0] && typeof results[0].result === 'number') {
-              filledCount = results[0].result;
+            if (results && results.length > 0) {
+              filledCount = results.reduce((sum: number, r: any) => sum + (typeof r.result === 'number' ? r.result : 0), 0);
             }
           }
 

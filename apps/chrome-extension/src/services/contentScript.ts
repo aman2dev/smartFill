@@ -93,7 +93,7 @@ export const activeExamRecipe: RecipeMapping[] = [
 export function universalEngineFiller(recipe: RecipeMapping[], profile: Record<string, any>) {
   const filledInputs = new Set<Element>();
 
-  const isVerifyText = (str: string) => /verify|confirm|re-enter|reenter|सत्यापित|पुष्टि/i.test(str);
+  const isVerifyText = (str: string) => /verify|confirm|re-enter|reenter|सत्यापित|पुष्टि|(?:\b|_|-)re(?:_|-|\b)|(?:\b|_|-)v(?:_|-|\b)|(?:_|-)?(?:2)$/i.test(str);
   const isOtpText = (str: string) => /otp|password|passcode/i.test(str);
 
   // Specific key aliases (excluding loose 'name')
@@ -101,7 +101,7 @@ export function universalEngineFiller(recipe: RecipeMapping[], profile: Record<s
     full_name: ['candidatename', 'applicantname', 'fullname', 'full_name', 'candidate_name', 'applicant_name'],
     father_name: ['fathername', 'father_name', 'fathersname', 'father_full_name'],
     mother_name: ['mothername', 'mother_name', 'mothersname', 'mother_full_name'],
-    dob: ['dob', 'dateofbirth', 'birthdate', 'candidatedob', 'candidate_dob', 'verifycandidatedob', 'verifydob', 'confirmdob'],
+    dob: ['dob', 'dateofbirth', 'date_of_birth', 'birthdate', 'candidatedob', 'candidate_dob', 'txtdob', 'txt_dob', 'verifycandidatedob', 'verifydob', 'confirmdob', 're_dob', 'dob2', 'txtdob2', 'verify_dob'],
     gender: ['gender', 'sex', 'candidate_gender'],
     category: ['category', 'caste', 'socialcategory', 'community'],
     aadhaar_no: ['aadhaarnumber', 'aadhaar_no', 'aadhaar', 'uid_no'],
@@ -145,7 +145,8 @@ export function universalEngineFiller(recipe: RecipeMapping[], profile: Record<s
 
   sortedRecipe.forEach((field) => {
     const targetText = field.match_label;
-    let valueToFill = profile[field.profile_key] || profile[targetText];
+    const baseKey = String(field.profile_key).replace(/^(verify_|confirm_|re_enter_|reenter_|re_)/i, '');
+    let valueToFill = profile[field.profile_key] || profile[baseKey] || profile[targetText];
 
     // Address Fallback: If present_address is requested but empty, fallback to permanent address
     if (!valueToFill && field.profile_key.startsWith('present_')) {
@@ -156,7 +157,7 @@ export function universalEngineFiller(recipe: RecipeMapping[], profile: Record<s
     if (!valueToFill) return;
 
     // Standardize DOB format if filling text/date inputs (e.g. DD/MM/YYYY vs YYYY-MM-DD)
-    if (field.profile_key === 'dob') {
+    if (field.profile_key === 'dob' || baseKey === 'dob') {
       const dobStr = String(valueToFill).trim();
       if (dobStr.includes('-') && dobStr.length === 10) {
         const parts = dobStr.split('-');
@@ -168,7 +169,7 @@ export function universalEngineFiller(recipe: RecipeMapping[], profile: Record<s
     }
 
     // Standardize Mobile number (clean spaces/dashes)
-    if (field.profile_key === 'phone') {
+    if (field.profile_key === 'phone' || baseKey === 'phone') {
       valueToFill = String(valueToFill).replace(/\D/g, '');
       if (valueToFill.length > 10 && valueToFill.startsWith('91')) {
         valueToFill = valueToFill.slice(-10);
@@ -190,6 +191,14 @@ export function universalEngineFiller(recipe: RecipeMapping[], profile: Record<s
           matches = Array.from(document.querySelectorAll(field.selector));
         }
 
+        // Fallback: If selector used :nth-of-type or :nth-child across parent containers and returned 0, strip and find unfilled match!
+        if (matches.length === 0 && (field.selector.includes(':nth-of-type') || field.selector.includes(':nth-child'))) {
+          const cleanSelector = field.selector.replace(/:(?:nth-of-type|nth-child)\(\d+\)/g, '').trim();
+          if (cleanSelector) {
+            matches = Array.from(document.querySelectorAll(cleanSelector));
+          }
+        }
+
         // Find the first un-filled candidate matching the selector
         const aiMatch = matches.find((m) => !filledInputs.has(m));
         if (aiMatch) {
@@ -202,7 +211,7 @@ export function universalEngineFiller(recipe: RecipeMapping[], profile: Record<s
 
     // Strategy A: Direct Match by ID, name, or placeholder using key aliases
     if (!inputElement) {
-      const aliases = keyAliases[field.profile_key] || [field.profile_key];
+      const aliases = keyAliases[field.profile_key] || keyAliases[baseKey] || [field.profile_key];
       for (const alias of aliases) {
         const candidates = Array.from(document.querySelectorAll(
           `input[id*="${alias}" i]:not([type="hidden"]), input[name*="${alias}" i]:not([type="hidden"]), select[id*="${alias}" i], select[name*="${alias}" i], textarea[id*="${alias}" i], textarea[name*="${alias}" i]`
@@ -272,16 +281,24 @@ export function universalEngineFiller(recipe: RecipeMapping[], profile: Record<s
           let parent: HTMLElement | null = anchor.parentElement;
           let depth = 0;
           while (parent && depth < 5) {
-            const found = parent.querySelector('input:not([type="hidden"]), select, textarea');
-            if (found && !filledInputs.has(found)) {
-              const inputFound = found as HTMLInputElement;
-              if (!isOtpText(inputFound.name || '')) {
-                const attrStr = `${inputFound.id || ''} ${inputFound.name || ''} ${inputFound.placeholder || ''}`;
-                const hasVerify = isVerifyText(attrStr);
-                if ((field.is_verify && hasVerify) || (!field.is_verify && !hasVerify)) {
-                  inputElement = inputFound as any;
-                  break;
-                }
+            const foundInputs = Array.from(parent.querySelectorAll('input:not([type="hidden"]), select, textarea'));
+            const candidates = foundInputs.filter((el) => !filledInputs.has(el) && !isOtpText((el as HTMLInputElement).name || '') && !isOtpText((el as HTMLInputElement).id || ''));
+
+            if (candidates.length > 0) {
+              if (candidates.length === 1) {
+                // If container has exactly 1 unfilled input, it directly belongs to this anchor!
+                inputElement = candidates[0] as any;
+                break;
+              } else {
+                // Multiple inputs in container -> prefer one whose attributes match verify state
+                const matched = candidates.find((cand) => {
+                  const inp = cand as HTMLInputElement;
+                  const attrStr = `${inp.id || ''} ${inp.name || ''} ${inp.placeholder || ''}`;
+                  const hasVerify = isVerifyText(attrStr);
+                  return field.is_verify ? hasVerify : !hasVerify;
+                }) || candidates[0];
+                inputElement = matched as any;
+                break;
               }
             }
             parent = parent.parentElement;

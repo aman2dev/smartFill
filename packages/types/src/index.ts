@@ -81,10 +81,22 @@ export interface APIErrorResponse {
   code: string;
 }
 
+export interface InteractiveElementSummary {
+  id?: string;
+  name?: string;
+  type?: string;
+  tagName: string;
+  placeholder?: string;
+  nearestText?: string;
+  selectorHint?: string;
+}
+
 export interface ExtractFormRequest {
-  htmlSnippet: string;
+  htmlSnippet?: string;
+  screenshotBase64?: string;
+  elementsSummary?: InteractiveElementSummary[];
   domain: string;
-  userId: string;
+  userId?: string;
 }
 
 export interface ExtractFormResponse {
