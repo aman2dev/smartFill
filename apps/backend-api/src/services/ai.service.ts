@@ -103,6 +103,7 @@ CRITICAL GROUNDING & SELECTOR RULES:
 4. MULTILINGUAL & VISUAL MANDATE: Recognize fields in ALL languages (English, Hindi, regional scripts: 'मोबाइल'/'फोन' -> phone, 'ईमेल' -> email, 'लिंग' -> gender, 'नाम' -> full_name, 'पिता का नाम' -> father_name). Visually verify labels next to boxes in the screenshot.
 5. PAIRED VERIFICATION MANDATE: Always output BOTH primary AND verification mappings when paired confirm/verify fields exist on the form (e.g. output BOTH 'Candidate Date of Birth' AND 'Confirm Candidate Date of Birth'). Strip any red asterisks (*) or colons from match_label.
 6. ADDRESS & CHECKBOX MANDATE: Map Permanent Address vs Present/Correspondence Address distinctly. Map any 'Same as Permanent Address' or 'Same as Present Address' checkboxes to profile_key 'same_as_permanent'.
+7. FILE UPLOAD MANDATE: Inspect every <input type="file"> on the page (photo, signature, marksheet, certificate, Aadhaar, PAN). Look at nearby instruction text (e.g. "Size 20KB to 50KB", "Max 25 KB", "Dimension 200x230") and output "fileUploadRules".
 
 Return strictly valid JSON in this structure:
 {
@@ -121,6 +122,26 @@ Return strictly valid JSON in this structure:
       "profile_key": "full_name",
       "is_verify": true,
       "strategy": "css_selector"
+    }
+  ],
+  "fileUploadRules": [
+    {
+      "docType": "photo",
+      "selector": "input[type='file'][name*='photo' i]",
+      "match_label": "Upload Photograph",
+      "minKb": 20,
+      "maxKb": 50,
+      "maxWidth": 350,
+      "maxHeight": 450
+    },
+    {
+      "docType": "signature",
+      "selector": "input[type='file'][name*='sign' i]",
+      "match_label": "Upload Signature",
+      "minKb": 10,
+      "maxKb": 20,
+      "maxWidth": 300,
+      "maxHeight": 120
     }
   ]
 }`;
@@ -149,7 +170,8 @@ Return strictly valid JSON in this structure:
         domain,
         formTitle: parsed.formTitle || `${domain} Form`,
         version: 1,
-        mappings: parsed.mappings || []
+        mappings: parsed.mappings || [],
+        fileUploadRules: parsed.fileUploadRules || []
       };
     }
   } catch (aiErr) {

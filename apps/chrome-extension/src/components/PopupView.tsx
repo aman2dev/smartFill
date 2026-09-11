@@ -13,10 +13,12 @@ import {
   Maximize2,
   FilePlus,
   AlertCircle,
-  QrCode
+  QrCode,
+  Download,
+  Sliders
 } from 'lucide-react';
 import type { StoredDocument } from '../types';
-import type { InteractiveElementSummary } from '@smartFill/types';
+import type { InteractiveElementSummary, FileUploadRule } from '@smartFill/types';
 import {
   getTempCustomerDocsAsync,
   saveTempCustomerDocs,
@@ -30,7 +32,20 @@ import { UserSession } from '../services/authService';
 import { ExamLauncher } from './ExamLauncher';
 import { QrUploadModal } from './QrUploadModal';
 import { PopularExam } from '../services/popularExams';
-import { universalEngineFiller, activeExamRecipe } from '../services/contentScript';
+import {
+  universalEngineFiller,
+  universalFileUploader,
+  activeExamRecipe,
+  UploadFileItem,
+  FileUploadBatchReport
+} from '../services/contentScript';
+import {
+  compressImage,
+  classifyDocumentType,
+  detectPortalPreset,
+  PORTAL_PRESETS,
+  PortalPreset
+} from '../services/imageCompressor';
 
 interface PopupViewProps {
   session: UserSession | null;
@@ -49,11 +64,15 @@ export const PopupView: React.FC<PopupViewProps> = ({
   const [extractedFields, setExtractedFields] = useState<Record<string, string>>({});
   const [isExtracting, setIsExtracting] = useState(false);
   const [isAutofilling, setIsAutofilling] = useState(false);
+  const [isInjectingDocs, setIsInjectingDocs] = useState(false);
+  const [isOptimizingDocs, setIsOptimizingDocs] = useState(false);
   const [sessionPaid, setSessionPaid] = useState<boolean>(false);
   const [selectedExam, setSelectedExam] = useState<PopularExam | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isPopupView, setIsPopupView] = useState(false);
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [selectedPresetKey, setSelectedPresetKey] = useState<string>('auto');
+  const [activeDomain, setActiveDomain] = useState<string>('');
 
   useEffect(() => {
     getTempCustomerDocsAsync().then((docs) => setTempDocs(docs));
@@ -63,6 +82,17 @@ export const PopupView: React.FC<PopupViewProps> = ({
     const isPopup = window.location.pathname.endsWith('popup.html') ||
       document.getElementById('root')?.getAttribute('data-view') === 'popup';
     setIsPopupView(isPopup);
+
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs: any[]) => {
+        if (tabs && tabs[0]?.url) {
+          try {
+            const domain = new URL(tabs[0].url).hostname;
+            setActiveDomain(domain);
+          } catch (e) {}
+        }
+      });
+    }
   }, []);
 
   const handleOpenFullTab = () => {
@@ -73,25 +103,110 @@ export const PopupView: React.FC<PopupViewProps> = ({
     }
   };
 
+  const getActivePreset = (): PortalPreset => {
+    if (selectedPresetKey !== 'auto' && PORTAL_PRESETS[selectedPresetKey]) {
+      return PORTAL_PRESETS[selectedPresetKey];
+    }
+    return detectPortalPreset(activeDomain || 'general');
+  };
+
+  const handlePresetChange = async (newKey: string) => {
+    setSelectedPresetKey(newKey);
+    const newPreset = newKey === 'auto' ? detectPortalPreset(activeDomain) : (PORTAL_PRESETS[newKey] || PORTAL_PRESETS.general);
+
+    if (tempDocs.length === 0) return;
+
+    setIsOptimizingDocs(true);
+    try {
+      const updatedDocs = await Promise.all(
+        tempDocs.map(async (doc) => {
+          if (!doc.dataUrl || doc.fileType === 'pdf') return doc;
+          let rule = newPreset.document || { minKb: 50, maxKb: 200, targetKb: 120 };
+          if (doc.type === 'Passport Photo') rule = newPreset.photo;
+          else if (doc.type === 'Signature') rule = newPreset.signature;
+
+          try {
+            const comp = await compressImage(doc.dataUrl, {
+              minKb: rule.minKb,
+              maxKb: rule.maxKb,
+              targetKb: rule.targetKb,
+              maxWidth: rule.maxWidth,
+              maxHeight: rule.maxHeight,
+              fileName: doc.name,
+            });
+            return {
+              ...doc,
+              optimizedDataUrl: comp.dataUrl,
+              optimizedSizeBytes: comp.sizeBytes,
+              targetRange: { minKb: rule.minKb, maxKb: rule.maxKb },
+            };
+          } catch (e) {
+            return doc;
+          }
+        })
+      );
+      setTempDocs(updatedDocs);
+      saveTempCustomerDocs(updatedDocs);
+      onNotify('success', 'Images Re-Optimized', `All candidate files adjusted to ${newPreset.name} requirements.`);
+    } finally {
+      setIsOptimizingDocs(false);
+    }
+  };
+
   const processFiles = (files: FileList | File[]) => {
     if (!files || files.length === 0) return;
 
+    const preset = getActivePreset();
+
     Array.from(files).forEach((file, idx) => {
+      const docType = classifyDocumentType(file.name);
+      const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(file.name);
+
       const reader = new FileReader();
-      reader.onload = (evt) => {
+      reader.onload = async (evt) => {
         const base64Data = evt.target?.result as string;
+        let optimizedDataUrl = base64Data;
+        let optimizedSizeBytes = file.size;
+        let targetRange: { minKb: number; maxKb: number } | undefined = undefined;
+
+        if (isImage) {
+          try {
+            let rule = preset.document || { minKb: 50, maxKb: 200, targetKb: 120 };
+            if (docType === 'Passport Photo') rule = preset.photo;
+            else if (docType === 'Signature') rule = preset.signature;
+
+            targetRange = { minKb: rule.minKb, maxKb: rule.maxKb };
+            const compressed = await compressImage(base64Data, {
+              minKb: rule.minKb,
+              maxKb: rule.maxKb,
+              targetKb: rule.targetKb,
+              maxWidth: rule.maxWidth,
+              maxHeight: rule.maxHeight,
+              fileName: file.name,
+            });
+            optimizedDataUrl = compressed.dataUrl;
+            optimizedSizeBytes = compressed.sizeBytes;
+          } catch (compErr) {
+            console.warn('[smartFill] Compression warning:', compErr);
+          }
+        }
+
         const newDoc: StoredDocument = {
           id: `doc-${Date.now()}-${idx}`,
           name: file.name,
-          type: file.name.toLowerCase().includes('aadhaar') ? 'Aadhaar Card' : 'Degree Certificate',
-          fileType: file.name.endsWith('.pdf') ? 'pdf' : (file.type || 'image/jpeg') as any,
+          type: docType,
+          fileType: file.name.endsWith('.pdf') ? 'pdf' : ((file.type || 'image/jpeg') as any),
           sizeBytes: file.size,
           dataUrl: base64Data,
+          optimizedDataUrl,
+          optimizedSizeBytes,
+          targetRange,
           uploadDate: new Date().toISOString(),
           status: 'processed',
           confidenceScore: 98,
           extractedFields: [],
         };
+
         setTempDocs((prev) => {
           const updated = [...prev, newDoc];
           saveTempCustomerDocs(updated);
@@ -100,12 +215,173 @@ export const PopupView: React.FC<PopupViewProps> = ({
       };
       reader.readAsDataURL(file);
     });
-    onNotify('success', 'Documents Added', `Added ${files.length} customer document(s) to active session.`);
+    onNotify('success', 'Documents Added & Optimized', `Added ${files.length} document(s) matching ${preset.name} size limits.`);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       processFiles(e.target.files);
+    }
+  };
+
+  const handleDownloadDoc = (doc: StoredDocument) => {
+    const data = doc.optimizedDataUrl || doc.dataUrl;
+    if (!data) return;
+    const link = document.createElement('a');
+    link.href = data;
+    link.download = `optimized_${doc.name.replace(/\.[^/.]+$/, '')}.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    onNotify('success', 'Downloaded', `Saved ${doc.name} (${Math.round((doc.optimizedSizeBytes || doc.sizeBytes) / 1024)} KB)`);
+  };
+
+  const runDocumentInjection = async (
+    tabId: number,
+    fileRules: FileUploadRule[] = []
+  ): Promise<{ injectedCount: number; healedCount: number }> => {
+    if (tempDocs.length === 0) return { injectedCount: 0, healedCount: 0 };
+
+    const filesPayload: UploadFileItem[] = tempDocs
+      .filter((d) => d.optimizedDataUrl || d.dataUrl)
+      .map((d) => ({
+        id: d.id,
+        fileName: d.name,
+        docType: d.type,
+        dataUrl: d.optimizedDataUrl || d.dataUrl || '',
+        sizeKb: Math.round((d.optimizedSizeBytes || d.sizeBytes) / 1024),
+      }));
+
+    const injectionRes = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: universalFileUploader,
+      args: [fileRules, filesPayload],
+    });
+
+    let injectedCount = 0;
+    let healedCount = 0;
+    const rejectedItems: Array<{
+      fileName: string;
+      docType: string;
+      errorDetected: string;
+      detectedBounds?: { minKb?: number; maxKb?: number };
+    }> = [];
+
+    if (injectionRes && injectionRes.length > 0) {
+      injectionRes.forEach((frameRes: any) => {
+        const report: FileUploadBatchReport = frameRes?.result;
+        if (report) {
+          injectedCount += report.uploadedCount;
+          report.results?.forEach((r) => {
+            if (!r.success && r.detectedBounds) {
+              rejectedItems.push({
+                fileName: r.fileName,
+                docType: r.docType,
+                errorDetected: r.errorDetected || '',
+                detectedBounds: r.detectedBounds,
+              });
+            }
+          });
+        }
+      });
+    }
+
+    // Self-Healing Feedback Loop: Recompress to exact detected bounds if portal warned/rejected
+    if (rejectedItems.length > 0) {
+      console.log('[smartFill] 🩹 Self-Healing Triggered: Portal rejected files with size constraints:', rejectedItems);
+      const healedDocs: UploadFileItem[] = [];
+
+      for (const rej of rejectedItems) {
+        const originalDoc = tempDocs.find((d) => d.name === rej.fileName || d.type === rej.docType);
+        if (originalDoc && originalDoc.dataUrl && rej.detectedBounds?.maxKb) {
+          try {
+            const minK = rej.detectedBounds.minKb || 5;
+            const maxK = rej.detectedBounds.maxKb;
+            const targetK = Math.round(minK + (maxK - minK) / 2);
+
+            const recompressed = await compressImage(originalDoc.dataUrl, {
+              minKb: minK,
+              maxKb: maxK,
+              targetKb: targetK,
+              fileName: originalDoc.name,
+            });
+
+            // Update local doc
+            setTempDocs((prev) => {
+              const updated = prev.map((docItem) =>
+                docItem.id === originalDoc.id
+                  ? {
+                      ...docItem,
+                      optimizedDataUrl: recompressed.dataUrl,
+                      optimizedSizeBytes: recompressed.sizeBytes,
+                      targetRange: { minKb: minK, maxKb: maxK },
+                    }
+                  : docItem
+              );
+              saveTempCustomerDocs(updated);
+              return updated;
+            });
+
+            healedDocs.push({
+              id: originalDoc.id,
+              fileName: originalDoc.name,
+              docType: originalDoc.type,
+              dataUrl: recompressed.dataUrl,
+              sizeKb: recompressed.sizeKb,
+            });
+            healedCount++;
+          } catch (e) {
+            console.warn('[smartFill] Healing recompression failed:', e);
+          }
+        }
+      }
+
+      if (healedDocs.length > 0) {
+        await chrome.scripting.executeScript({
+          target: { tabId, allFrames: true },
+          func: universalFileUploader,
+          args: [fileRules, healedDocs],
+        });
+        onNotify(
+          'success',
+          'Self-Healing Upload Success',
+          `Portal warned about size bounds. smartFill auto-recompressed ${healedCount} file(s) to exact limits and successfully uploaded!`
+        );
+      }
+    }
+
+    return { injectedCount, healedCount };
+  };
+
+  const handleDirectInjectDocs = async () => {
+    if (tempDocs.length === 0) {
+      onNotify('error', 'No Documents Uploaded', 'Please upload at least 1 document first.');
+      return;
+    }
+
+    setIsInjectingDocs(true);
+    try {
+      if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+        const tabs = await new Promise<any[]>((resolve) =>
+          chrome.tabs.query({ active: true, currentWindow: true }, resolve)
+        );
+        if (tabs[0]?.id) {
+          const { injectedCount, healedCount } = await runDocumentInjection(tabs[0].id);
+          if (injectedCount > 0) {
+            onNotify(
+              'success',
+              'Documents Injected!',
+              `Uploaded ${injectedCount} document(s) into file inputs.${healedCount > 0 ? ` (${healedCount} self-healed)` : ''}`
+            );
+          } else {
+            onNotify('info', 'No File Inputs Found', 'No matching file upload inputs detected on the current active tab.');
+          }
+        }
+      }
+    } catch (e: any) {
+      onNotify('error', 'Document Injection Failed', e?.message || 'Failed to inject files.');
+    } finally {
+      setIsInjectingDocs(false);
     }
   };
 
@@ -260,6 +536,7 @@ export const PopupView: React.FC<PopupViewProps> = ({
 
     try {
       let filledCount = 0;
+      let uploadedDocsCount = 0;
       if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
         const tabs = await new Promise<any[]>((resolve) =>
           chrome.tabs.query({ active: true, currentWindow: true }, resolve)
@@ -389,6 +666,8 @@ export const PopupView: React.FC<PopupViewProps> = ({
 
           // Step 3: Fetch AI Recipe from Backend API / DB Cache (Dual-Input Multimodal Grounding)
           let recipeToUse = activeExamRecipe;
+          let recipeFileUploadRules: FileUploadRule[] = [];
+
           try {
             const backendUrl = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:4000';
             const apiRes = await fetch(`${backendUrl}/api/v1/extract-recipe`, {
@@ -407,6 +686,9 @@ export const PopupView: React.FC<PopupViewProps> = ({
               const json = await apiRes.json();
               if (json.success && json.recipe && json.recipe.mappings) {
                 recipeToUse = json.recipe.mappings;
+                if (json.recipe.fileUploadRules) {
+                  recipeFileUploadRules = json.recipe.fileUploadRules;
+                }
                 console.log(`[Backend AI Recipe Loaded] ${json.cached ? '(DB Cache Hit)' : '(Gemini Multimodal Grounded)'}`, json.recipe);
               }
             }
@@ -426,6 +708,16 @@ export const PopupView: React.FC<PopupViewProps> = ({
             }
           }
 
+          // Step 5: Execute Universal File Uploader if documents are present in session
+          if (tempDocs.length > 0 && chrome.scripting && chrome.scripting.executeScript) {
+            try {
+              const { injectedCount } = await runDocumentInjection(tabs[0].id, recipeFileUploadRules);
+              uploadedDocsCount = injectedCount;
+            } catch (injErr) {
+              console.warn('[smartFill] Document injection warning:', injErr);
+            }
+          }
+
           chrome.tabs.sendMessage(tabs[0].id, {
             action: 'AUTOFILL_FORM',
             payload: profilePayload
@@ -435,6 +727,8 @@ export const PopupView: React.FC<PopupViewProps> = ({
         // Fallback for local testing
         filledCount = universalEngineFiller(activeExamRecipe, profilePayload);
       }
+
+      const summaryDetails = `${filledCount > 0 ? `${filledCount} fields filled` : 'Form filled'}${uploadedDocsCount > 0 ? ` + ${uploadedDocsCount} documents uploaded` : ''}`;
 
       if (!sessionPaid) {
         if (session.user.credits <= 0) {
@@ -454,9 +748,9 @@ export const PopupView: React.FC<PopupViewProps> = ({
         onUpdateSession(updatedSession);
         setSessionPaid(true);
         setCustomerSessionPaid(true);
-        onNotify('success', `Form Autofilled! (${filledCount > 0 ? filledCount + ' fields filled' : '1 Credit Used'})`, `Remaining AI Credits: ${newCredits}`);
+        onNotify('success', `Form Autofilled! (${summaryDetails})`, `Remaining AI Credits: ${newCredits}`);
       } else {
-        onNotify('success', `Form Autofilled! (${filledCount > 0 ? filledCount + ' fields filled' : '0 credits charged'})`, 'Customer session active.');
+        onNotify('success', `Form Autofilled! (${summaryDetails})`, 'Customer session active.');
       }
     } catch (err: any) {
       onNotify('error', 'Autofill Failed', err.message || 'Failed to fill form on webpage.');
@@ -548,7 +842,7 @@ export const PopupView: React.FC<PopupViewProps> = ({
       {/* POPULAR EXAM LAUNCHER (BPSC TRE 4.0, CTET, SSC) */}
       <ExamLauncher onSelectExam={(exam) => setSelectedExam(exam)} />
 
-      {/* STEP 1: UPLOAD CUSTOMER DOCUMENTS */}
+      {/* STEP 1: UPLOAD CUSTOMER DOCUMENTS & ADAPTIVE RESIZER */}
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -559,29 +853,44 @@ export const PopupView: React.FC<PopupViewProps> = ({
             : 'border-slate-200 bg-slate-50'
         }`}
       >
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center space-x-2">
             <span className="w-5 h-5 rounded-full bg-orange-500 text-white flex items-center justify-center font-black text-[10px]">
               1
             </span>
-            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-              Upload Customer Documents (Aadhaar / Marksheets)
-            </h3>
+            <div>
+              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                Customer Documents & Adaptive Resizer
+              </h3>
+              <p className="text-[10px] text-slate-500">Auto-compressed client-side for strict portal size limits</p>
+            </div>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center flex-wrap gap-1.5">
+            {tempDocs.length > 0 && (
+              <button
+                onClick={handleDirectInjectDocs}
+                disabled={isInjectingDocs}
+                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors shadow-xs cursor-pointer disabled:opacity-50"
+                title="Inject optimized files directly into active page's file upload inputs"
+              >
+                <Zap className="w-3.5 h-3.5 fill-white" />
+                <span>{isInjectingDocs ? 'Injecting...' : 'Auto-Inject Files'}</span>
+              </button>
+            )}
+
             <button
               onClick={() => setIsQrModalOpen(true)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
+              className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
               title="Show QR code for customer to scan with their phone"
             >
               <QrCode className="w-3.5 h-3.5" />
-              <span>Scan QR to Upload</span>
+              <span>Scan QR</span>
             </button>
 
             <label
               onClick={handleAddFilesButtonClick}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs transition-colors shadow-xs cursor-pointer"
+              className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs transition-colors shadow-xs cursor-pointer"
             >
               <Upload className="w-3.5 h-3.5" />
               <span>Add Files</span>
@@ -594,6 +903,30 @@ export const PopupView: React.FC<PopupViewProps> = ({
               />
             </label>
           </div>
+        </div>
+
+        {/* Portal Target Preset Selector */}
+        <div className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-xl text-xs gap-2">
+          <div className="flex items-center space-x-2 text-slate-700 font-semibold truncate">
+            <Sliders className="w-4 h-4 text-orange-500 shrink-0" />
+            <span className="text-[11px] text-slate-600 shrink-0">Portal Target Limits:</span>
+          </div>
+          <select
+            value={selectedPresetKey}
+            onChange={(e) => handlePresetChange(e.target.value)}
+            disabled={isOptimizingDocs}
+            aria-label="Portal Target Limits Preset"
+            className="px-2.5 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-orange-500 cursor-pointer"
+          >
+            <option value="auto">⚡ Auto-Detect ({activeDomain || 'General Portal'})</option>
+            <option value="bpsc">BPSC Bihar (Photo: 10-25KB | Sign: 5-15KB)</option>
+            <option value="ssc">SSC (Photo: 20-50KB | Sign: 10-20KB)</option>
+            <option value="upsc">UPSC (Photo: 20-300KB | Sign: 20-300KB)</option>
+            <option value="nsdl_pan">NSDL PAN (Photo: 20-50KB | Sign: 10-50KB)</option>
+            <option value="utiitsl_pan">UTIITSL PAN (Photo: 10-30KB | Sign: 10-60KB)</option>
+            <option value="parivahan">Parivahan Sarathi (Photo/Sign: 10-20KB)</option>
+            <option value="general">Universal Govt Portal (Photo: 20-50KB)</option>
+          </select>
         </div>
 
         {isPopupView && (
@@ -609,31 +942,88 @@ export const PopupView: React.FC<PopupViewProps> = ({
           <div className="border-2 border-dashed border-slate-200 bg-white rounded-xl p-6 text-center text-slate-500 text-xs space-y-2">
             <FilePlus className="w-8 h-8 text-orange-400 mx-auto" />
             <p className="font-semibold text-slate-700">
-              Drag & Drop customer PDF / Image files here
+              Drag & Drop customer Photo, Signature, Aadhaar, or Marksheets here
             </p>
             <p className="text-[11px] text-slate-400">
-              Supports Aadhaar Card, 10th/12th/Graduation Marksheets & Certificates
+              smartFill auto-classifies and adaptively compresses images to exact portal requirements (e.g. 20KB-50KB) in ~30ms
             </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {tempDocs.map((doc) => (
-              <div
-                key={doc.id}
-                className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-xl text-xs"
-              >
-                <div className="flex items-center space-x-2 truncate">
-                  <FileText className="w-4 h-4 text-orange-500 shrink-0" />
-                  <span className="font-semibold text-slate-800 truncate">{doc.name}</span>
-                </div>
-                <button
-                  onClick={() => handleRemoveDoc(doc.id)}
-                  className="text-slate-400 hover:text-red-500 p-1 transition-colors"
+            {tempDocs.map((doc) => {
+              const origKb = Math.round(doc.sizeBytes / 1024);
+              const optKb = doc.optimizedSizeBytes ? Math.round(doc.optimizedSizeBytes / 1024) : origKb;
+              const hasPreview = doc.optimizedDataUrl || doc.dataUrl;
+
+              return (
+                <div
+                  key={doc.id}
+                  className="flex items-center justify-between p-2.5 bg-white border border-slate-200 hover:border-orange-300 rounded-xl text-xs transition-all shadow-2xs"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+                  <div className="flex items-center space-x-2.5 truncate min-w-0">
+                    {hasPreview && doc.fileType !== 'pdf' ? (
+                      <img
+                        src={doc.optimizedDataUrl || doc.dataUrl}
+                        alt={doc.name}
+                        className="w-10 h-10 rounded-lg object-cover border border-slate-200 shrink-0 bg-slate-100"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-orange-50 border border-orange-200 flex items-center justify-center shrink-0">
+                        <FileText className="w-5 h-5 text-orange-500" />
+                      </div>
+                    )}
+                    <div className="truncate min-w-0">
+                      <div className="flex items-center space-x-1.5">
+                        <span className="font-bold text-slate-800 truncate block text-[12px]">{doc.name}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                          doc.type === 'Passport Photo'
+                            ? 'bg-purple-100 text-purple-800 border-purple-200'
+                            : doc.type === 'Signature'
+                            ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                            : doc.type === 'Aadhaar Card'
+                            ? 'bg-amber-100 text-amber-800 border-amber-200'
+                            : doc.type === 'PAN Card'
+                            ? 'bg-cyan-100 text-cyan-800 border-cyan-200'
+                            : 'bg-blue-100 text-blue-800 border-blue-200'
+                        }`}>
+                          {doc.type}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-1.5 text-[10px] text-slate-500 mt-0.5">
+                        <span>{origKb > 1024 ? `${(origKb / 1024).toFixed(1)} MB` : `${origKb} KB`}</span>
+                        {doc.optimizedSizeBytes && doc.optimizedSizeBytes !== doc.sizeBytes && (
+                          <>
+                            <span className="text-emerald-600 font-bold">➔ {optKb} KB</span>
+                            {doc.targetRange && (
+                              <span className="text-[9px] bg-slate-100 text-slate-600 px-1 py-0.5 rounded font-medium">
+                                ({doc.targetRange.minKb}-{doc.targetRange.maxKb}KB)
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-1 shrink-0 ml-2">
+                    <button
+                      onClick={() => handleDownloadDoc(doc)}
+                      className="p-1.5 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors cursor-pointer"
+                      title="Download 1-Click Optimized File"
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleRemoveDoc(doc.id)}
+                      className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                      title="Remove Document"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

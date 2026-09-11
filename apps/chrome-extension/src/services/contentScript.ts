@@ -443,11 +443,261 @@ export function universalEngineFiller(recipe: RecipeMapping[], profile: Record<s
   return fillCount;
 }
 
+export interface UploadFileItem {
+  id?: string;
+  fileName: string;
+  docType: string;
+  dataUrl: string;
+  sizeKb?: number;
+}
+
+export interface FileUploadResult {
+  docType: string;
+  fileName: string;
+  inputSelector: string;
+  sizeKb?: number;
+  success: boolean;
+  errorDetected?: string;
+  detectedBounds?: { minKb?: number; maxKb?: number };
+}
+
+export interface FileUploadBatchReport {
+  uploadedCount: number;
+  results: FileUploadResult[];
+}
+
+/**
+ * Universal File Uploader Engine:
+ * Executed in target web page context via chrome.scripting.executeScript.
+ * - Injects optimized files into <input type="file"> using the HTML5 DataTransfer API.
+ * - Bypasses framework locks and triggers native change/input events.
+ * - Features self-healing interceptor: catches window.alert & DOM error warnings
+ *   (e.g. "Size must be between 10KB and 20KB") to report back exact bounds.
+ */
+export function universalFileUploader(
+  fileRules: any[] = [],
+  filesPayload: UploadFileItem[] = []
+): FileUploadBatchReport {
+  let uploadedCount = 0;
+  const results: FileUploadResult[] = [];
+  const assignedInputs = new Set<Element>();
+
+  // Self-contained base64 DataURL to File object converter
+  function dataUrlToFile(dataUrl: string, fileName: string): File {
+    const arr = dataUrl.split(',');
+    const mimeMatch = arr[0].match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    const bstr = atob(arr[1] || arr[0]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new File([u8arr], fileName, { type: mime });
+  }
+
+  // Self-contained parser for portal size error messages
+  function parseSizeConstraints(text: string): { minKb?: number; maxKb?: number } | null {
+    if (!text) return null;
+    const rangeMatch = text.match(/(?:between|from)?\s*(\d+)\s*(?:kb|k)?\s*(?:to|-|and)\s*(\d+)\s*(?:kb|k)/i);
+    if (rangeMatch) {
+      const minKb = parseInt(rangeMatch[1], 10);
+      const maxKb = parseInt(rangeMatch[2], 10);
+      if (!isNaN(minKb) && !isNaN(maxKb) && minKb < maxKb) {
+        return { minKb, maxKb };
+      }
+    }
+    const maxMatch = text.match(/(?:max|maximum|exceed|less than|up to|below)\s*(?:of|size)?\s*(\d+)\s*(?:kb|k)/i);
+    if (maxMatch) {
+      const maxKb = parseInt(maxMatch[1], 10);
+      if (!isNaN(maxKb) && maxKb > 0) {
+        return { minKb: Math.max(5, Math.round(maxKb * 0.4)), maxKb };
+      }
+    }
+    return null;
+  }
+
+  if (!filesPayload || filesPayload.length === 0) {
+    return { uploadedCount: 0, results: [] };
+  }
+
+  const originalAlert = window.alert;
+  let interceptedAlertText: string | null = null;
+  try {
+    window.alert = function (msg: any) {
+      interceptedAlertText = String(msg);
+      console.log('[smartFill File Uploader] Intercepted page alert:', msg);
+    };
+  } catch (e) {}
+
+  try {
+    const fileInputs = Array.from(document.querySelectorAll('input[type="file"]')) as HTMLInputElement[];
+
+    if (fileInputs.length === 0) {
+      return { uploadedCount: 0, results: [] };
+    }
+
+    fileInputs.forEach((input) => {
+      if (assignedInputs.has(input)) return;
+
+      const id = input.id || '';
+      const name = input.name || '';
+      const accept = input.accept || '';
+      const title = input.title || '';
+      let labelText = '';
+      if (id) {
+        const lbl = document.querySelector(`label[for="${id}"]`);
+        if (lbl) labelText = (lbl as HTMLElement).innerText || '';
+      }
+      const container = input.closest('tr, td, .form-group, .form-item, div, p');
+      let parentText = '';
+      if (container) {
+        parentText = ((container as HTMLElement).innerText || '').replace(/\s+/g, ' ');
+      }
+      const contextStr = `${id} ${name} ${accept} ${title} ${labelText} ${parentText}`.toLowerCase();
+
+      // Rule selector match (if recipe provided specific selector)
+      let matchedRule = (fileRules || []).find((r) => {
+        try {
+          return r.selector && (input.matches(r.selector) || input.id === r.selector.replace('#', ''));
+        } catch (e) {
+          return false;
+        }
+      });
+
+      // Target document classification
+      let targetType = matchedRule?.docType || '';
+      if (!targetType) {
+        if (/photo|photograph|pic|avatar|image|passport_photo|तस्वीर|फोटो/i.test(contextStr)) {
+          targetType = 'photo';
+        } else if (/sign|signature|hastakshar|हस्ताक्षर|दस्तखत/i.test(contextStr)) {
+          targetType = 'signature';
+        } else if (/aadhaar|aadhar|uid/i.test(contextStr)) {
+          targetType = 'aadhaar';
+        } else if (/pan|pancard/i.test(contextStr)) {
+          targetType = 'pan';
+        } else if (/10th|matric|highschool|ssc/i.test(contextStr)) {
+          targetType = 'marksheet_10';
+        } else if (/12th|inter|intermediate|hsc/i.test(contextStr)) {
+          targetType = 'marksheet_12';
+        } else if (/degree|graduation|diploma|btech|bsc|bcom|ba/i.test(contextStr)) {
+          targetType = 'degree';
+        } else if (/doc|document|certificate|marksheet|प्रमाण पत्र|अंक पत्र/i.test(contextStr)) {
+          targetType = 'other_document';
+        }
+      }
+
+      // Find matching file from payload
+      const matchedPayload = filesPayload.find((f) => {
+        const fType = (f.docType || '').toLowerCase();
+        const fName = (f.fileName || '').toLowerCase();
+
+        if (targetType === 'photo') {
+          return fType.includes('photo') || fName.includes('photo') || fName.includes('pic') || fName.includes('passport');
+        }
+        if (targetType === 'signature') {
+          return fType.includes('sign') || fName.includes('sign') || fName.includes('hastakshar');
+        }
+        if (targetType === 'aadhaar') {
+          return fType.includes('aadhaar') || fName.includes('aadhaar') || fName.includes('aadhar');
+        }
+        if (targetType === 'pan') {
+          return fType.includes('pan') || fName.includes('pan');
+        }
+        if (targetType === 'marksheet_10') {
+          return fType.includes('10th') || fName.includes('10th') || fName.includes('matric');
+        }
+        if (targetType === 'marksheet_12') {
+          return fType.includes('12th') || fName.includes('12th') || fName.includes('inter');
+        }
+        if (targetType === 'degree') {
+          return fType.includes('degree') || fName.includes('degree') || fName.includes('grad');
+        }
+        if (targetType === 'other_document') {
+          return !fType.includes('photo') && !fType.includes('sign');
+        }
+        return false;
+      }) || (fileInputs.length === 1 && filesPayload.length === 1 ? filesPayload[0] : null);
+
+      if (!matchedPayload || !matchedPayload.dataUrl) return;
+
+      assignedInputs.add(input);
+
+      try {
+        interceptedAlertText = null;
+        const fileObj = dataUrlToFile(matchedPayload.dataUrl, matchedPayload.fileName);
+        const dt = new DataTransfer();
+        dt.items.add(fileObj);
+        input.files = dt.files;
+
+        // Visual feedback highlight
+        input.style.outline = '3px solid #10b981';
+        input.style.outlineOffset = '2px';
+        input.focus();
+
+        // Dispatch input and change events
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        uploadedCount++;
+
+        // Inspect for client-side JavaScript rejection alerts or DOM errors
+        let errorText = interceptedAlertText || '';
+        if (!errorText && container) {
+          const errorNodes = container.querySelectorAll(
+            '.error, .alert, .text-danger, .invalid-feedback, span[style*="red"], div[style*="red"], p[style*="red"]'
+          );
+          for (const node of Array.from(errorNodes)) {
+            const txt = (node as HTMLElement).innerText || '';
+            if (/kb|mb|size|dimension|pixel|width|height|between|exceed|allowed/i.test(txt)) {
+              errorText = txt;
+              break;
+            }
+          }
+        }
+
+        const bounds = errorText ? parseSizeConstraints(errorText) : null;
+
+        results.push({
+          docType: matchedPayload.docType,
+          fileName: matchedPayload.fileName,
+          inputSelector: input.id ? `#${input.id}` : input.name ? `input[name="${input.name}"]` : 'input[type="file"]',
+          sizeKb: matchedPayload.sizeKb,
+          success: !errorText,
+          errorDetected: errorText || undefined,
+          detectedBounds: bounds || undefined,
+        });
+      } catch (err: any) {
+        results.push({
+          docType: matchedPayload.docType,
+          fileName: matchedPayload.fileName,
+          inputSelector: input.id ? `#${input.id}` : 'input[type="file"]',
+          sizeKb: matchedPayload.sizeKb,
+          success: false,
+          errorDetected: err?.message || 'Failed to inject file via DataTransfer',
+        });
+      }
+    });
+  } finally {
+    try {
+      window.alert = originalAlert;
+    } catch (e) {}
+  }
+
+  return {
+    uploadedCount,
+    results,
+  };
+}
+
 // Global window listener for background/popup message events
 if (typeof window !== 'undefined') {
   window.addEventListener('message', (event) => {
     if (event.data && event.data.action === 'AUTOFILL_FORM') {
       universalEngineFiller(activeExamRecipe, event.data.payload || {});
+    } else if (event.data && event.data.action === 'AUTOFILL_FILES') {
+      universalFileUploader(event.data.fileRules || [], event.data.filesPayload || []);
     }
   });
 }
+

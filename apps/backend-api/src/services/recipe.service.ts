@@ -50,25 +50,18 @@ export const extractRecipeService = async (
 
   if (cached) {
     const parsedMappings = cached.mappingsJson as unknown as RecipeMapping[];
-    const hasValidSelectors = Array.isArray(parsedMappings) && parsedMappings.some((m) => !!m.selector || m.strategy === 'css_selector');
-    const hasInvalidSelectors = Array.isArray(parsedMappings) && parsedMappings.some((m) => 
+    const hasValidMappings = Array.isArray(parsedMappings) && parsedMappings.length > 0;
+    
+    // Only invalidate if mappings have broken jQuery syntax like :contains or :has
+    const hasBrokenSyntax = Array.isArray(parsedMappings) && parsedMappings.some((m) => 
       !m.selector ||
-      m.selector.includes('nth-child') || 
-      m.selector.includes('nth-of-type') ||
       m.selector.includes(':contains') ||
       m.selector.includes(':has(') ||
       (m.selector.startsWith('#') && /^#\d+$/.test(m.selector))
     );
 
-    // Invalidate stale cache if verify selector is identical to primary selector for same key
-    const hasDuplicateVerifySelectors = Array.isArray(parsedMappings) && parsedMappings.some((m1, idx1) => 
-      m1.is_verify && parsedMappings.some((m2, idx2) => 
-        idx1 !== idx2 && !m2.is_verify && m2.profile_key === m1.profile_key && m2.selector === m1.selector
-      )
-    );
-
-    if (hasValidSelectors && !hasInvalidSelectors && !hasDuplicateVerifySelectors) {
-      console.log(`[Cache Hit] Serving selector-enhanced cached recipe for domain: ${domain}`);
+    if (hasValidMappings && !hasBrokenSyntax) {
+      console.log(`[Cache Hit] Serving cached recipe for domain: ${domain} (${parsedMappings.length} mappings)`);
       return {
         statusCode: 200,
         data: {
@@ -86,7 +79,7 @@ export const extractRecipeService = async (
         }
       };
     } else {
-      console.log(`[Cache Invalidated] Refreshing recipe with invalid/legacy selectors for domain: ${domain}`);
+      console.log(`[Cache Invalidated] Refreshing recipe with broken syntax for domain: ${domain}`);
       await db.recipeCache.delete({ where: { domain } }).catch(() => {});
     }
   }

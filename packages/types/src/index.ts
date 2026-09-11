@@ -26,6 +26,17 @@ export interface ExtractedField {
   category: 'personal' | 'contact' | 'identity' | 'academic';
 }
 
+export interface FileUploadRule {
+  docType: 'photo' | 'signature' | 'aadhaar' | 'marksheet' | 'pan' | 'other';
+  selector: string;
+  match_label?: string;
+  minKb?: number;
+  maxKb?: number;
+  maxWidth?: number;
+  maxHeight?: number;
+  format?: 'jpeg' | 'png' | 'pdf';
+}
+
 export interface StoredDocument {
   id: string;
   name: string;
@@ -33,6 +44,9 @@ export interface StoredDocument {
   fileType: FileType;
   sizeBytes: number;
   dataUrl?: string;
+  optimizedDataUrl?: string;
+  optimizedSizeBytes?: number;
+  targetRange?: { minKb: number; maxKb: number };
   uploadDate: string;
   status: 'scanning' | 'processed' | 'error';
   confidenceScore: number;
@@ -57,6 +71,7 @@ export interface StudentProfile {
   state?: string;
   pincode?: string;
   photo_base64?: string;
+  signature_base64?: string;
 }
 
 export interface RecipeMapping {
@@ -72,6 +87,7 @@ export interface ExamRecipe {
   domain: string;
   formTitle: string;
   mappings: RecipeMapping[];
+  fileUploadRules?: FileUploadRule[];
   version: number;
 }
 
