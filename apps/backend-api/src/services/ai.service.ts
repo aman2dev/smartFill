@@ -95,6 +95,15 @@ Map them to the standard profile JSON keys:
 - panCard (PAN Card Number)
 - accountNumber (Bank Account Number)
 - ifscCode (Bank IFSC Code)
+- marital_status (Marital Status / वैवाहिक स्थिति)
+- nationality (Nationality / Citizenship / राष्ट्रीयता)
+- identification_mark (Identification Mark / पहचान चिह्न)
+- is_ex_serviceman (Ex-Serviceman / ESM / भूतपूर्व सैनिक)
+- is_debarred (Debarred / Dismissed / Rusticated)
+- has_criminal_case (Criminal / FIR / Pending Court Cases)
+- is_pwd (Person with Benchmark Disability / PwBD / Divyang)
+- is_departmental (Departmental / Central Govt Employee)
+- age_relaxation (Age Relaxation Claim)
 
 CRITICAL GROUNDING & SELECTOR RULES:
 1. "selector": Construct simple, clean, standard W3C CSS selectors supported natively by browser document.querySelector (e.g. "#inputId", "input[name='attrName']", "input[placeholder*='DD/MM/YYYY']", "input[name*='dob' i]"). If element ID is purely numeric (e.g. id="78248"), output attribute selector format '[id="78248"]' or 'input[name="78248"]' instead of '#78248'. NEVER output ":nth-of-type()" or ":nth-child()" pseudo-selectors, because inputs inside separate column containers are not CSS siblings and these will return 0 elements! NEVER output non-standard jQuery pseudo-selectors like ":contains()" or ":has()", and NEVER output fragile deep DOM tree paths like "div > div:nth-child(7)".
@@ -104,6 +113,7 @@ CRITICAL GROUNDING & SELECTOR RULES:
 5. PAIRED VERIFICATION MANDATE: Always output BOTH primary AND verification mappings when paired confirm/verify fields exist on the form (e.g. output BOTH 'Candidate Date of Birth' AND 'Confirm Candidate Date of Birth'). Strip any red asterisks (*) or colons from match_label.
 6. ADDRESS & CHECKBOX MANDATE: Map Permanent Address vs Present/Correspondence Address distinctly. Map any 'Same as Permanent Address' or 'Same as Present Address' checkboxes to profile_key 'same_as_permanent'.
 7. FILE UPLOAD MANDATE: Inspect every <input type="file"> on the page (photo, signature, marksheet, certificate, Aadhaar, PAN). Look at nearby instruction text (e.g. "Size 20KB to 50KB", "Max 25 KB", "Dimension 200x230") and output "fileUploadRules".
+8. DECLARATION QUESTIONS MANDATE: If the form has standard declaration questions (Debarred by SSC/UPSC, Criminal cases, Ex-Serviceman, PwBD/Disability, Scribe, Departmental, Marital Status, Nationality), map them to their corresponding declaration keys.
 
 Return strictly valid JSON in this structure:
 {
