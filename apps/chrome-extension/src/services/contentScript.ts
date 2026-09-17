@@ -313,9 +313,17 @@ export function universalEngineFiller(recipe: RecipeMapping[], profile: Record<s
     filledInputs.add(inputElement);
     fillCount++;
 
-    // Visual feedback highlight (preserves webpage theme & background color)
-    inputElement.style.outline = '2px solid #f97316';
+    // Clean visual feedback (temporary subtle pulse that disappears after 1s, leaving clean inputs)
+    inputElement.style.outline = '2px solid #10b981';
     inputElement.style.outlineOffset = '1px';
+    inputElement.style.boxShadow = '';
+    inputElement.removeAttribute('data-smartfill-missing');
+    setTimeout(() => {
+      try {
+        inputElement.style.outline = '';
+        inputElement.style.outlineOffset = '';
+      } catch (e) {}
+    }, 1000);
     inputElement.focus();
 
     // Select Dropdowns
@@ -440,7 +448,403 @@ export function universalEngineFiller(recipe: RecipeMapping[], profile: Record<s
     }
   });
 
-  return fillCount;
+  // Safe Negative Declarations (SND) & Smart Common Defaults Engine
+  let safeDefaultsCount = 0;
+
+  if (profile.enableSafeDefaults !== false) {
+    const declarationRules = [
+      {
+        id: 'proxy',
+        pattern: /proxy|appearing\s*on\s*behalf/i,
+        aliases: ['no', 'nahi', 'नहीं', '0', 'n']
+      },
+      {
+        id: 'debarment',
+        pattern: /debar|debarred|dismissed|rusticated|blacklisted|निष्कासित|डिबार/i,
+        aliases: ['no', 'nahi', 'नहीं', '0', 'n']
+      },
+      {
+        id: 'criminal',
+        pattern: /criminal|fir\b|charge\s*sheet|pending\s*case|convict|court\s*of\s*law|prosecut|आपराधिक|मुकदमा|दोषी|वारंट/i,
+        aliases: ['no', 'nahi', 'नहीं', '0', 'n']
+      },
+      {
+        id: 'court_convicted',
+        pattern: /arrested|detained|convicted|court\s*of\s*law/i,
+        aliases: ['no', 'nahi', 'नहीं', '0', 'n']
+      },
+      {
+        id: 'dept_enquiry',
+        pattern: /departmental\s*enquiry|disciplinary\s*action|विभागीय\s*जांच/i,
+        aliases: ['no', 'nahi', 'नहीं', '0', 'n']
+      },
+      {
+        id: 'ex_serviceman',
+        pattern: /ex-servicemen|ex\s*serviceman|esm\b|defense\s*personnel|armed\s*forces|भूतपूर्व\s*सैनिक/i,
+        aliases: ['no', 'nahi', 'नहीं', '0', 'n']
+      },
+      {
+        id: 'disability',
+        pattern: /disability|pwbd|ph\b|handicapped|divyang|cerebral\s*palsy|scribe|physical\s*limitation|limitation\s*to\s*write|विकलांग|दिव्यांग/i,
+        aliases: ['no', 'nahi', 'नहीं', '0', 'n']
+      },
+      {
+        id: 'departmental',
+        pattern: /departmental|central\s*gov.*employee|regular\s*gov.*servant|civilian\s*employee|autonomous\s*body|undertaking|विभागीय|सरकारी\s*कर्मचारी/i,
+        aliases: ['no', 'nahi', 'नहीं', '0', 'n']
+      },
+      {
+        id: 'age_relaxation',
+        pattern: /age\s*relaxation|आयु\s*सीमा\s*में\s*छूट/i,
+        aliases: ['no', 'nahi', 'नहीं', '0', 'n']
+      },
+      {
+        id: 'minority',
+        pattern: /minority\s*community|minority|अल्पसंख्यक\s*समुदाय/i,
+        aliases: ['no', 'nahi', 'नहीं', '0', 'n']
+      },
+      {
+        id: 'job_opportunities',
+        pattern: /job\s*opportunit|accessing\s*job|dop&t|dopt|share.*personal.*info|personal\s*info.*available/i,
+        aliases: ['yes', 'haan', 'हाँ', '1', 'y']
+      },
+      {
+        id: 'nationality',
+        pattern: /nationality|citizenship|नागरिकता|राष्ट्रीयता/i,
+        aliases: ['citizen of india', 'indian', 'india', 'भारतीय']
+      },
+      {
+        id: 'marital_status',
+        pattern: /marital\s*status|वैवाहिक\s*स्थिति/i,
+        aliases: [String(profile.marital_status || 'unmarried').toLowerCase(), 'unmarried', 'single', 'अविवाहित', 'un-married']
+      }
+    ];
+
+    // A. Radio groups auto-answering
+    const radioInputs = Array.from(document.querySelectorAll('input[type="radio"]')) as HTMLInputElement[];
+    const radioGroups = new Map<string, HTMLInputElement[]>();
+
+    radioInputs.forEach((radio) => {
+      if (filledInputs.has(radio)) return;
+      const groupKey = radio.name || radio.closest('.gov-form-group, .form-group, fieldset, tr')?.getAttribute('id') || 'unnamed_group_' + Math.random();
+      if (!radioGroups.has(groupKey)) {
+        radioGroups.set(groupKey, []);
+      }
+      radioGroups.get(groupKey)!.push(radio);
+    });
+
+    radioGroups.forEach((groupRadios) => {
+      if (groupRadios.some((r) => r.checked)) return;
+
+      const firstRadio = groupRadios[0];
+
+      // Build comprehensive question context by traversing up DOM tree
+      let questionText = `${firstRadio.name || ''} ${firstRadio.id || ''} `;
+      const ariaLabel = firstRadio.getAttribute('aria-label') || firstRadio.closest('fieldset')?.getAttribute('aria-label');
+      if (ariaLabel) questionText += ariaLabel + ' ';
+
+      let curr: HTMLElement | null = firstRadio.parentElement;
+      for (let depth = 0; depth < 6 && curr && curr !== document.body; depth++) {
+        const labels = Array.from(curr.querySelectorAll('label, legend, h3, h4, h5, h6, th, dt, p, .gov-label, .form-label, .control-label'));
+        for (const l of labels) {
+          const txt = (l as HTMLElement).innerText || '';
+          if (txt.trim().length > 2 && !/^(yes|no|हाँ|नहीं|true|false|na|n\/a)$/i.test(txt.trim())) {
+            questionText += txt + ' ';
+          }
+        }
+
+        if (
+          curr.classList.contains('gov-form-group') ||
+          curr.classList.contains('form-group') ||
+          curr.classList.contains('form-item') ||
+          curr.classList.contains('form-row') ||
+          curr.tagName === 'TR' ||
+          curr.tagName === 'FIELDSET'
+        ) {
+          questionText += (curr.innerText || '') + ' ';
+          break;
+        }
+
+        curr = curr.parentElement;
+      }
+
+      questionText = questionText.replace(/\s+/g, ' ');
+
+      for (const rule of declarationRules) {
+        if (rule.pattern.test(questionText)) {
+          const targetRadio = groupRadios.find((r) => {
+            const rVal = (r.value || '').toLowerCase().trim();
+            const rId = (r.id || '').toLowerCase().trim();
+            const rLabel = (document.querySelector(`label[for="${r.id}"]`) as HTMLElement)?.innerText?.toLowerCase().trim() || '';
+            const rParent = r.parentElement?.innerText?.toLowerCase().trim() || '';
+
+            return rule.aliases.some((alias) => {
+              const a = alias.toLowerCase().trim();
+              if (rVal === a || rId.endsWith(`_${a}`) || rId.endsWith(`-${a}`)) return true;
+              const wordRegex = new RegExp(`(^|\\b|\\s)${a}(\\b|\\s|$)`, 'i');
+              return wordRegex.test(rParent) || wordRegex.test(rLabel) || wordRegex.test(rVal);
+            });
+          });
+
+          if (targetRadio && !filledInputs.has(targetRadio)) {
+            targetRadio.checked = true;
+            const checkedSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set;
+            if (checkedSetter) {
+              checkedSetter.call(targetRadio, true);
+            }
+            targetRadio.dispatchEvent(new Event('click', { bubbles: true }));
+            targetRadio.dispatchEvent(new Event('change', { bubbles: true }));
+            targetRadio.dispatchEvent(new Event('input', { bubbles: true }));
+
+            // Clean feedback: subtle brief flash, no permanent outline
+            targetRadio.style.outline = '2px solid #10b981';
+            targetRadio.style.outlineOffset = '2px';
+            setTimeout(() => {
+              try {
+                targetRadio.style.outline = '';
+                targetRadio.style.outlineOffset = '';
+              } catch (e) {}
+            }, 1000);
+
+            filledInputs.add(targetRadio);
+            safeDefaultsCount++;
+            fillCount++;
+            break;
+          }
+        }
+      }
+    });
+
+    // B. Select dropdowns auto-answering (e.g. Marital Status, Nationality, Debarred)
+    const selectElements = Array.from(document.querySelectorAll('select')) as HTMLSelectElement[];
+    selectElements.forEach((sel) => {
+      if (filledInputs.has(sel)) return;
+      if (sel.selectedIndex > 0 && sel.value && !/select|choose|--/i.test(sel.value)) return;
+
+      let contextText = `${sel.name || ''} ${sel.id || ''} `;
+      let curr: HTMLElement | null = sel.parentElement;
+      for (let depth = 0; depth < 5 && curr && curr !== document.body; depth++) {
+        const labels = Array.from(curr.querySelectorAll('label, legend, th, .gov-label, .form-label'));
+        for (const l of labels) {
+          contextText += ((l as HTMLElement).innerText || '') + ' ';
+        }
+        if (curr.classList.contains('gov-form-group') || curr.classList.contains('form-group') || curr.tagName === 'TR') {
+          contextText += (curr.innerText || '') + ' ';
+          break;
+        }
+        curr = curr.parentElement;
+      }
+      contextText = contextText.replace(/\s+/g, ' ');
+
+      for (const rule of declarationRules) {
+        if (rule.pattern.test(contextText)) {
+          const options = Array.from(sel.options);
+          const matchedOpt = options.find((opt) => {
+            const optTxt = (opt.text || '').toLowerCase();
+            const optVal = (opt.value || '').toLowerCase();
+            return rule.aliases.some((alias) => optTxt.includes(alias.toLowerCase()) || optVal.includes(alias.toLowerCase()));
+          });
+
+          if (matchedOpt) {
+            sel.value = matchedOpt.value;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+
+            // Subtle temporary flash
+            sel.style.outline = '2px solid #10b981';
+            sel.style.outlineOffset = '1px';
+            setTimeout(() => {
+              try {
+                sel.style.outline = '';
+                sel.style.outlineOffset = '';
+              } catch (e) {}
+            }, 1000);
+
+            filledInputs.add(sel);
+            safeDefaultsCount++;
+            fillCount++;
+            break;
+          }
+        }
+      }
+    });
+
+    // C. Identification mark text input auto-answering
+    const textInputs = Array.from(document.querySelectorAll('input[type="text"], textarea')) as (HTMLInputElement | HTMLTextAreaElement)[];
+    textInputs.forEach((inp) => {
+      if (filledInputs.has(inp) || (inp.value && inp.value.trim().length > 0)) return;
+
+      let contextText = `${inp.name || ''} ${inp.id || ''} ${inp.placeholder || ''} `;
+      let curr: HTMLElement | null = inp.parentElement;
+      for (let depth = 0; depth < 4 && curr && curr !== document.body; depth++) {
+        const labels = Array.from(curr.querySelectorAll('label, legend, th, .gov-label, .form-label'));
+        for (const l of labels) {
+          contextText += ((l as HTMLElement).innerText || '') + ' ';
+        }
+        if (curr.classList.contains('gov-form-group') || curr.classList.contains('form-group') || curr.tagName === 'TR') {
+          contextText += (curr.innerText || '') + ' ';
+          break;
+        }
+        curr = curr.parentElement;
+      }
+      contextText = contextText.replace(/\s+/g, ' ');
+
+      if (/identification\s*mark|identity\s*mark|पहचान\s*चिह्न/i.test(contextText)) {
+        const markVal = profile.identification_mark || 'None';
+        inp.value = markVal;
+        inp.setAttribute('value', markVal);
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        inp.dispatchEvent(new Event('change', { bubbles: true }));
+
+        inp.style.outline = '2px solid #10b981';
+        setTimeout(() => {
+          try {
+            inp.style.outline = '';
+          } catch (e) {}
+        }, 1000);
+
+        filledInputs.add(inp);
+        safeDefaultsCount++;
+        fillCount++;
+      }
+    });
+  }
+
+  // Missing Mandatory Fields Scanner & Visual Amber Highlighter
+  const missingMandatory: Array<{ label: string; id?: string; name?: string; type?: string }> = [];
+
+  try {
+    // 1. Clear any prior missing highlights
+    document.querySelectorAll('[data-smartfill-missing]').forEach((el) => {
+      (el as HTMLElement).style.outline = '';
+      (el as HTMLElement).style.outlineOffset = '';
+      (el as HTMLElement).style.boxShadow = '';
+      el.removeAttribute('data-smartfill-missing');
+    });
+
+    const allInteractive = Array.from(
+      document.querySelectorAll('input:not([type="hidden"]), select, textarea')
+    ) as (HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement)[];
+
+    // Collect names of radio groups that have at least one checked option
+    const checkedRadioNames = new Set<string>();
+    document.querySelectorAll('input[type="radio"]:checked').forEach((r) => {
+      const name = (r as HTMLInputElement).name;
+      if (name) checkedRadioNames.add(name);
+    });
+
+    const processedRadioNames = new Set<string>();
+
+    allInteractive.forEach((el) => {
+      // Ignore buttons, submits, resets
+      if (el.type === 'button' || el.type === 'submit' || el.type === 'reset') return;
+      // Ignore hidden or disabled elements
+      if (el.disabled) return;
+      if (el.offsetParent === null && window.getComputedStyle(el).display === 'none') return;
+
+      // Ignore fields filled during this run
+      if (filledInputs.has(el)) return;
+
+      // Radio handling: check group status
+      if (el.type === 'radio') {
+        const radioName = (el as HTMLInputElement).name;
+        if (radioName) {
+          if (checkedRadioNames.has(radioName)) return; // Radio group is already satisfied!
+          if (processedRadioNames.has(radioName)) return; // Only process this group once
+          processedRadioNames.add(radioName);
+        } else if ((el as HTMLInputElement).checked) {
+          return;
+        }
+      }
+
+      // Checkbox handling: if checked, not missing
+      if (el.type === 'checkbox' && (el as HTMLInputElement).checked) return;
+
+      // Text / Number / Date / Email / Tel / Textarea: if has non-empty value, NOT missing!
+      if (el.type !== 'radio' && el.type !== 'checkbox' && el.tagName !== 'SELECT') {
+        if (el.value && el.value.trim().length > 0) return;
+      }
+
+      // Select: if a valid non-placeholder option is selected, NOT missing!
+      if (el.tagName === 'SELECT') {
+        const selVal = el.value ? el.value.trim() : '';
+        if (selVal.length > 0 && !/^(select|choose|--|$)/i.test(selVal) && (el as HTMLSelectElement).selectedIndex > 0) {
+          return;
+        }
+      }
+
+      // Check if mandatory via attribute or red asterisk
+      let isMandatory = el.hasAttribute('required') || (el as any).required === true || el.getAttribute('aria-required') === 'true';
+
+      let labelText = '';
+      if (el.id) {
+        const lbl = document.querySelector(`label[for="${el.id}"]`);
+        if (lbl) {
+          const lHtml = (lbl as HTMLElement).innerHTML || '';
+          labelText = (lbl as HTMLElement).innerText || '';
+          if (lHtml.includes('*') || lbl.className.includes('req') || lbl.className.includes('mandatory')) {
+            isMandatory = true;
+          }
+        }
+      }
+
+      const container = el.closest('.gov-form-group, .form-group, .form-item, tr');
+      if (container) {
+        const cText = (container as HTMLElement).innerText || '';
+        const cHtml = (container as HTMLElement).innerHTML || '';
+        if (!labelText) {
+          const foundLabel = container.querySelector('.gov-label, .form-label, label, th');
+          if (foundLabel) {
+            labelText = (foundLabel as HTMLElement).innerText || '';
+          } else {
+            labelText = cText.slice(0, 60);
+          }
+        }
+        if (
+          container.querySelector('.gov-req, .required, .mandatory, span[style*="red"], font[color="red"], [class*="asterisk"]') ||
+          cHtml.includes('color="red"') ||
+          cHtml.includes('color: red') ||
+          cText.includes('*')
+        ) {
+          isMandatory = true;
+        }
+      }
+
+      // ONLY highlight missing mandatory fields!
+      if (isMandatory) {
+        el.setAttribute('data-smartfill-missing', 'true');
+        el.style.outline = '2px solid #eab308';
+        el.style.outlineOffset = '2px';
+        el.style.boxShadow = '0 0 8px rgba(234, 179, 8, 0.4)';
+
+        // Clear highlight immediately when user interacts
+        const clearHighlight = () => {
+          el.style.outline = '';
+          el.style.outlineOffset = '';
+          el.style.boxShadow = '';
+          el.removeAttribute('data-smartfill-missing');
+        };
+        el.addEventListener('input', clearHighlight, { once: true });
+        el.addEventListener('change', clearHighlight, { once: true });
+
+        const cleanLabel = labelText.replace(/[*:]/g, '').replace(/\([^)]*\)/g, '').trim() || (el as HTMLInputElement).placeholder || el.name || el.id || 'Required Field';
+
+        missingMandatory.push({
+          label: cleanLabel.slice(0, 60),
+          id: el.id || undefined,
+          name: el.name || undefined,
+          type: el.type || el.tagName.toLowerCase()
+        });
+      }
+    });
+  } catch (e) {
+    // Non-fatal if DOM query fails
+  }
+
+  return {
+    fillCount,
+    safeDefaultsCount,
+    missingMandatory
+  };
 }
 
 export interface UploadFileItem {
@@ -630,9 +1034,15 @@ export function universalFileUploader(
         dt.items.add(fileObj);
         input.files = dt.files;
 
-        // Visual feedback highlight
-        input.style.outline = '3px solid #10b981';
-        input.style.outlineOffset = '2px';
+        // Temporary visual feedback pulse
+        input.style.outline = '2px solid #10b981';
+        input.style.outlineOffset = '1px';
+        setTimeout(() => {
+          try {
+            input.style.outline = '';
+            input.style.outlineOffset = '';
+          } catch (e) {}
+        }, 1000);
         input.focus();
 
         // Dispatch input and change events

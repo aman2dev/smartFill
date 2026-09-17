@@ -73,6 +73,10 @@ export const PopupView: React.FC<PopupViewProps> = ({
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
   const [selectedPresetKey, setSelectedPresetKey] = useState<string>('auto');
   const [activeDomain, setActiveDomain] = useState<string>('');
+  const [maritalStatus, setMaritalStatus] = useState<string>('Unmarried');
+  const [enableSafeDefaults, setEnableSafeDefaults] = useState<boolean>(true);
+  const [missingMandatoryFields, setMissingMandatoryFields] = useState<Array<{ label: string; id?: string; name?: string; type?: string }>>([]);
+  const [safeDefaultsCount, setSafeDefaultsCount] = useState<number>(0);
 
   useEffect(() => {
     getTempCustomerDocsAsync().then((docs) => setTempDocs(docs));
@@ -494,6 +498,8 @@ export const PopupView: React.FC<PopupViewProps> = ({
     clearTempCustomerSession();
     setTempDocs([]);
     setExtractedFields({});
+    setMissingMandatoryFields([]);
+    setSafeDefaultsCount(0);
     setSessionPaid(false);
     setSelectedExam(null);
     onNotify('info', 'Session Cleared', 'Ready for new customer form filling.');
@@ -529,7 +535,11 @@ export const PopupView: React.FC<PopupViewProps> = ({
       pincode: extractedFields.pincode || '',
       panCard: extractedFields.panCard || '',
       accountNumber: extractedFields.accountNumber || '',
-      ifscCode: extractedFields.ifscCode || ''
+      ifscCode: extractedFields.ifscCode || '',
+      marital_status: maritalStatus,
+      nationality: 'Citizen of India',
+      identification_mark: 'None',
+      enableSafeDefaults: enableSafeDefaults
     };
 
     setIsAutofilling(true);
@@ -537,6 +547,8 @@ export const PopupView: React.FC<PopupViewProps> = ({
     try {
       let filledCount = 0;
       let uploadedDocsCount = 0;
+      let autoDeclarationsCount = 0;
+      const collectedMissing: Array<{ label: string; id?: string; name?: string; type?: string }> = [];
       if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
         const tabs = await new Promise<any[]>((resolve) =>
           chrome.tabs.query({ active: true, currentWindow: true }, resolve)
@@ -704,9 +716,22 @@ export const PopupView: React.FC<PopupViewProps> = ({
               args: [recipeToUse, profilePayload]
             });
             if (results && results.length > 0) {
-              filledCount = results.reduce((sum: number, r: any) => sum + (typeof r.result === 'number' ? r.result : 0), 0);
+              results.forEach((r: any) => {
+                if (typeof r.result === 'number') {
+                  filledCount += r.result;
+                } else if (r.result && typeof r.result.fillCount === 'number') {
+                  filledCount += r.result.fillCount;
+                  autoDeclarationsCount += r.result.safeDefaultsCount || 0;
+                  if (Array.isArray(r.result.missingMandatory)) {
+                    collectedMissing.push(...r.result.missingMandatory);
+                  }
+                }
+              });
             }
           }
+
+          setMissingMandatoryFields(collectedMissing);
+          setSafeDefaultsCount(autoDeclarationsCount);
 
           // Step 5: Execute Universal File Uploader if documents are present in session
           if (tempDocs.length > 0 && chrome.scripting && chrome.scripting.executeScript) {
@@ -725,10 +750,23 @@ export const PopupView: React.FC<PopupViewProps> = ({
         }
       } else {
         // Fallback for local testing
-        filledCount = universalEngineFiller(activeExamRecipe, profilePayload);
+        const res: any = universalEngineFiller(activeExamRecipe, profilePayload);
+        if (typeof res === 'number') {
+          filledCount = res;
+        } else if (res && typeof res.fillCount === 'number') {
+          filledCount = res.fillCount;
+          autoDeclarationsCount = res.safeDefaultsCount || 0;
+          if (Array.isArray(res.missingMandatory)) {
+            collectedMissing.push(...res.missingMandatory);
+          }
+          setMissingMandatoryFields(res.missingMandatory || []);
+          setSafeDefaultsCount(res.safeDefaultsCount || 0);
+        }
       }
 
-      const summaryDetails = `${filledCount > 0 ? `${filledCount} fields filled` : 'Form filled'}${uploadedDocsCount > 0 ? ` + ${uploadedDocsCount} documents uploaded` : ''}`;
+      const declSummary = autoDeclarationsCount > 0 ? ` (including ${autoDeclarationsCount} safe declarations)` : '';
+      const missingSummary = collectedMissing.length > 0 ? ` • ${collectedMissing.length} required field(s) need candidate input` : '';
+      const summaryDetails = `${filledCount > 0 ? `${filledCount} fields filled${declSummary}` : 'Form filled'}${uploadedDocsCount > 0 ? ` + ${uploadedDocsCount} documents uploaded` : ''}${missingSummary}`;
 
       if (!sessionPaid) {
         if (session.user.credits <= 0) {
@@ -1086,7 +1124,75 @@ export const PopupView: React.FC<PopupViewProps> = ({
             </div>
           </div>
         )}
+
+        {/* Smart Form Defaults Configuration */}
+        <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2 text-xs">
+          <div className="flex items-center justify-between text-slate-700 font-bold border-b border-slate-100 pb-1.5">
+            <span className="flex items-center space-x-1.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>Smart Form Defaults (Safe Pre-Answers)</span>
+            </span>
+            {safeDefaultsCount > 0 && (
+              <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold">
+                ✓ {safeDefaultsCount} Auto-Answered
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] pt-0.5">
+            <div className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-200">
+              <span className="text-slate-600 font-semibold">Marital Status:</span>
+              <select
+                value={maritalStatus}
+                onChange={(e) => setMaritalStatus(e.target.value)}
+                className="px-2 py-0.5 bg-white border border-slate-300 rounded font-bold text-slate-800 focus:outline-none cursor-pointer"
+              >
+                <option value="Unmarried">Unmarried (Single)</option>
+                <option value="Married">Married</option>
+              </select>
+            </div>
+
+            <div className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-200">
+              <span className="text-slate-600 font-semibold">Auto-Answer "NO":</span>
+              <button
+                type="button"
+                onClick={() => setEnableSafeDefaults(!enableSafeDefaults)}
+                className={`px-2.5 py-0.5 rounded font-bold text-xs transition-colors cursor-pointer ${
+                  enableSafeDefaults
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    : 'bg-slate-200 text-slate-600'
+                }`}
+                title="Auto-selects NO for Debarment by SSC/UPSC, Criminal cases, Ex-Serviceman, and Disability"
+              >
+                {enableSafeDefaults ? '✓ ON (Debarred/FIR/PwD)' : 'OFF'}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* MISSING MANDATORY FIELDS CHECKLIST BANNER */}
+      {missingMandatoryFields.length > 0 && (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3.5 space-y-2 text-xs animate-fadeIn">
+          <div className="flex items-center space-x-2 text-amber-900 font-bold">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{missingMandatoryFields.length} Mandatory Field(s) Need Candidate Input (Highlighted in Yellow on Webpage):</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            {missingMandatoryFields.map((field, idx) => (
+              <span
+                key={idx}
+                className="px-2.5 py-1 rounded-lg bg-amber-100/90 border border-amber-300 text-amber-950 font-bold text-[11px] flex items-center space-x-1 shadow-2xs"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block shrink-0" />
+                <span>{field.label}</span>
+              </span>
+            ))}
+          </div>
+          <p className="text-[10px] text-amber-700">
+            💡 <strong>Operator Tip:</strong> The required fields above are outlined in yellow on the portal. Ask the candidate and type them in before submitting!
+          </p>
+        </div>
+      )}
 
       {/* STEP 3: AUTOFILL FORM */}
       <div className="bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/10 border border-orange-300 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">

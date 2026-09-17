@@ -72,6 +72,28 @@ export interface StudentProfile {
   pincode?: string;
   photo_base64?: string;
   signature_base64?: string;
+  marital_status?: 'Unmarried' | 'Married' | 'Single' | string;
+  nationality?: string;
+  identification_mark?: string;
+  is_ex_serviceman?: boolean | 'No' | 'Yes';
+  is_debarred?: boolean | 'No' | 'Yes';
+  has_criminal_case?: boolean | 'No' | 'Yes';
+  is_pwd?: boolean | 'No' | 'Yes';
+  is_departmental?: boolean | 'No' | 'Yes';
+}
+
+export interface MissingMandatoryField {
+  label: string;
+  id?: string;
+  name?: string;
+  type?: string;
+  selector?: string;
+}
+
+export interface FormFillResult {
+  fillCount: number;
+  safeDefaultsCount: number;
+  missingMandatory: MissingMandatoryField[];
 }
 
 export interface RecipeMapping {
